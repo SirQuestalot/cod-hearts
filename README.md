@@ -23,7 +23,7 @@ More coming soon (•̀ᴗ-)
 
 ![issue-tracker](https://cdn.modrinth.com/data/cached_images/1cb22f4783a54cdbfd57e312335683b8bb539806.png)
 
-<a href="https://github.com/SirQuestalot/issue_tracker/issues" target="_blank">
+<a href="https://github.com/SirQuestalot/cod-hearts/issues" target="_blank">
   <img src="https://cdn.modrinth.com/data/cached_images/2cdd5552770ad05e33e7f0ec35a0820d77c0626d_0.webp" width="150" alt="GitHub">
 </a>
 
