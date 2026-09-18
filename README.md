@@ -19,9 +19,6 @@ More coming soon (•̀ᴗ-)
 -<a href="https://modrinth.com/mod/farmers-delight" target="_blank">Farmers Delight</a>-<br>
 -<a href="https://modrinth.com/mod/farmers-delight-fabric" target="_blank">Farmers Delight [Fabric]</a>-<br>
 
--- <a href="https://github.com/SirQuestalot/mod_compat/blob/main/CodHearts.md" target="_blank">Complete Compatibility Guide</a> --
-
-
 #### _______________________________________________________________________________________________________________
 
 ![issue-tracker](https://cdn.modrinth.com/data/cached_images/1cb22f4783a54cdbfd57e312335683b8bb539806.png)
