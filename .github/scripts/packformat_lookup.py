@@ -9,7 +9,7 @@ def packformat_lookup(input_version, lookup_path):            #included lookup_p
 
         parts = [s.strip() for s in trimmed.split(',')]                                     #split each line into mc version and packformat number
         if len(parts) != 2:                                                                 #each line should only have two values, mc version and pack format number i.e. 26.2, 88
-            raise ValueError(f'Invalid line "{line_number} {trimmed}" in lookup file')      #throw error with line# and line content for typos/incorrect data entry in lookup_path
+            raise ValueError(f'Invalid line {line_number} in lookup file: "{trimmed}"')      #throw error with line# and line content for typos/incorrect data entry in lookup_path
         lookup_version, packformat_str = parts
 
         if lookup_version == input_version:                 #validate requested version against lookup table
