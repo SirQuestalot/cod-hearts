@@ -1,5 +1,5 @@
-def packformat_lookup(input_version, lookup_path):            #included lookup_path should be somewhere like .github/lookup.txt
-    with open(lookup_path, 'r') as f:                         #with repo license at top i.e. license: GPL-3.0-or-later
+def packformat_lookup(input_version, lookup_path):            #included lookup_path should be somewhere like .github/meta_lookup.txt
+    with open(lookup_path, 'r') as f:                         #with optional repo license line i.e. license: GPL-3.0-or-later
         lines = f.read().split('\n')                          #and lines of mc version with correspoding pack format number i.e. 26.2, 88
     
     for line_number, line in enumerate(lines, start=1):       #keep track of line number for each line
