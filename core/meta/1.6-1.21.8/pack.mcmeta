@@ -1,0 +1,7 @@
+{
+  "pack": {
+    "pack_format": {{PACK_FORMAT}},
+    "description": "{{DESCRIPTION}}"
+  },
+  "license": "{{LICENSE}}"
+}
