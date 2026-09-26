@@ -15,7 +15,7 @@ def packformat_lookup(input_version, lookup_path):            #included lookup_p
         if lookup_version == input_version:                 #validate requested version against lookup table
             return {'packformat': int(packformat_str)}      #packformat needs to be converted from string to integer
 
-    if input_version == '1.0-1.5.x':
+    if input_version == '1.0-1.5.2':
         return {'packformat': None}     #no pack format number for pre-1.6
 
     raise ValueError(f'No matching lookup entry for "{input_version}"')     #throw error for typos/invalid version sequence in input_version request
