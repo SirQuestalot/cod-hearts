@@ -1,0 +1,51 @@
+name: Sync License to Modrinth
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'LICENSE*'
+      - 'license*'
+      - 'License*'
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Update Modrinth license
+        env:
+          MODRINTH_TOKEN: ${{ secrets.MODRINTH_PROJECT_READWRITE_TOKEN }}
+          PROJECT_SLUG: ${{ github.event.repository.name }}
+          REPO: ${{ github.repository }}
+        run: |
+          LICENSE_JSON=$(curl -sS \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2026-03-10" \
+            "https://api.github.com/repos/${REPO}/license")
+
+          SPDX_ID=$(echo "$LICENSE_JSON" | jq -r '.license.spdx_id // empty')
+          LICENSE_PATH=$(echo "$LICENSE_JSON" | jq -r '.path // empty')
+
+          if [ -z "$SPDX_ID" ] || [ "$SPDX_ID" = "NOASSERTION" ] || [ "$SPDX_ID" = "null" ]; then
+            echo "Error: GitHub could not detect a valid SPDX license."
+            exit 1
+          fi
+
+          if [ -z "$LICENSE_PATH" ]; then
+            echo "Error: Could not determine license file path."
+            exit 1
+          fi
+
+          echo "License file path: $LICENSE_PATH"
+          echo "Detected SPDX license: $SPDX_ID"
+
+          LICENSE_URL="https://github.com/${REPO}/blob/${{ github.ref_name }}/${LICENSE_PATH}"
+
+          curl -sS -X PATCH "https://api.modrinth.com/v2/project/${PROJECT_SLUG}" \
+            -H "Authorization: $MODRINTH_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"license_id\": \"$SPDX_ID\", \"license_url\": \"$LICENSE_URL\"}"
