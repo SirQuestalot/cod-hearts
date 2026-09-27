@@ -34,37 +34,63 @@ jobs:
           echo "$LICENSE_JSON" | jq .
 
           SPDX_ID=$(echo "$LICENSE_JSON" | jq -r '.license.spdx_id // empty')
+          LICENSE_NAME=$(echo "$LICENSE_JSON" | jq -r '.license.name // empty')
           LICENSE_PATH=$(echo "$LICENSE_JSON" | jq -r '.path // empty')
-
-          if [ -z "$SPDX_ID" ] || [ "$SPDX_ID" = "NOASSERTION" ] || [ "$SPDX_ID" = "null" ]; then
-            echo "Error: GitHub could not detect a valid SPDX license."
-            exit 1
-          fi
 
           if [ -z "$LICENSE_PATH" ]; then
             echo "Error: Could not determine license file path."
             exit 1
           fi
 
-          echo "License file path: $LICENSE_PATH"
-          echo "Detected SPDX license: $SPDX_ID"
-
           LICENSE_URL="https://github.com/${REPO}/blob/${{ github.ref_name }}/${LICENSE_PATH}"
+          echo "License file path: $LICENSE_PATH"
           echo "License URL: $LICENSE_URL"
 
-          echo "Sending update to Modrinth..."
+          # --- Attempt 1: Use SPDX ID ---
+          if [ -n "$SPDX_ID" ] && [ "$SPDX_ID" != "NOASSERTION" ] && [ "$SPDX_ID" != "null" ]; then
+            echo "Attempting SPDX license: $SPDX_ID"
+
+            HTTP_CODE=$(curl -sS -o /tmp/modrinth_response.txt -w "%{http_code}" \
+              -X PATCH "https://api.modrinth.com/v2/project/${PROJECT_SLUG}" \
+              -H "Authorization: $MODRINTH_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "{\"license_id\": \"$SPDX_ID\", \"license_url\": \"$LICENSE_URL\"}")
+
+            echo "Modrinth HTTP status (SPDX attempt): $HTTP_CODE"
+            cat /tmp/modrinth_response.txt
+
+            if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+              echo "License sync completed successfully using SPDX ID."
+              exit 0
+            fi
+
+            echo "::warning::SPDX ID '$SPDX_ID' was rejected by Modrinth. Falling back to custom license."
+          else
+            echo "::warning::No valid SPDX ID detected by GitHub. Falling back to custom license."
+          fi
+
+          # --- Attempt 2: Fallback to Custom ---
+          # Use the long name from GitHub when available, otherwise a generic label
+          if [ -n "$LICENSE_NAME" ] && [ "$LICENSE_NAME" != "null" ]; then
+            CUSTOM_ID="$LICENSE_NAME"
+          else
+            CUSTOM_ID="Custom"
+          fi
+
+          echo "Falling back to custom license: $CUSTOM_ID"
+
           HTTP_CODE=$(curl -sS -o /tmp/modrinth_response.txt -w "%{http_code}" \
             -X PATCH "https://api.modrinth.com/v2/project/${PROJECT_SLUG}" \
             -H "Authorization: $MODRINTH_TOKEN" \
             -H "Content-Type: application/json" \
-            -d "{\"license_id\": \"$SPDX_ID\", \"license_url\": \"$LICENSE_URL\"}")
+            -d "{\"license_id\": \"$CUSTOM_ID\", \"license_url\": \"$LICENSE_URL\"}")
 
-          echo "Modrinth HTTP status: $HTTP_CODE"
+          echo "Modrinth HTTP status (custom fallback): $HTTP_CODE"
           cat /tmp/modrinth_response.txt
 
           if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
-            echo "Error: Modrinth API request failed"
+            echo "Error: Modrinth API request failed even with custom license."
             exit 1
           fi
 
-          echo "License sync completed successfully."
+          echo "License sync completed successfully using custom license."
