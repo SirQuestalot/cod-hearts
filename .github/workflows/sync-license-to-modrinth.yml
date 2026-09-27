@@ -22,10 +22,16 @@ jobs:
           PROJECT_SLUG: ${{ github.event.repository.name }}
           REPO: ${{ github.repository }}
         run: |
+          set -euo pipefail
+
+          echo "Fetching license info from GitHub..."
           LICENSE_JSON=$(curl -sS \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2026-03-10" \
             "https://api.github.com/repos/${REPO}/license")
+
+          echo "Raw GitHub response:"
+          echo "$LICENSE_JSON" | jq .
 
           SPDX_ID=$(echo "$LICENSE_JSON" | jq -r '.license.spdx_id // empty')
           LICENSE_PATH=$(echo "$LICENSE_JSON" | jq -r '.path // empty')
@@ -44,8 +50,21 @@ jobs:
           echo "Detected SPDX license: $SPDX_ID"
 
           LICENSE_URL="https://github.com/${REPO}/blob/${{ github.ref_name }}/${LICENSE_PATH}"
+          echo "License URL: $LICENSE_URL"
 
-          curl -sS -X PATCH "https://api.modrinth.com/v2/project/${PROJECT_SLUG}" \
+          echo "Sending update to Modrinth..."
+          HTTP_CODE=$(curl -sS -o /tmp/modrinth_response.txt -w "%{http_code}" \
+            -X PATCH "https://api.modrinth.com/v2/project/${PROJECT_SLUG}" \
             -H "Authorization: $MODRINTH_TOKEN" \
             -H "Content-Type: application/json" \
-            -d "{\"license_id\": \"$SPDX_ID\", \"license_url\": \"$LICENSE_URL\"}"
+            -d "{\"license_id\": \"$SPDX_ID\", \"license_url\": \"$LICENSE_URL\"}")
+
+          echo "Modrinth HTTP status: $HTTP_CODE"
+          cat /tmp/modrinth_response.txt
+
+          if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
+            echo "Error: Modrinth API request failed"
+            exit 1
+          fi
+
+          echo "License sync completed successfully."
