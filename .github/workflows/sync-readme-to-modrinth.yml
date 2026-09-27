@@ -1,0 +1,27 @@
+name: Sync README to Modrinth
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'README.md'
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Update Modrinth project body
+        env:
+          MODRINTH_TOKEN: ${{ secrets.MODRINTH_PROJECT_READWRITE_TOKEN }}
+          PROJECT_SLUG: ${{ github.event.repository.name }}
+        run: |
+          BODY=$(jq -Rs . < README.md)
+
+          curl -sS -X PATCH "https://api.modrinth.com/v2/project/${PROJECT_SLUG}" \
+            -H "Authorization: $MODRINTH_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"body\": $BODY}"
