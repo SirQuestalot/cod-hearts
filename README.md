@@ -2,7 +2,7 @@
 
 ![Cod Hearts Title](https://raw.githubusercontent.com/SirQuestalot/cod-hearts/main/.github/readme_media/cod_hearts_title.png)
 
-**Just a resource pack that turns your hearts into cod ¯\\\_(ツ)\_/¯**
+TEST **Just a resource pack that turns your hearts into cod ¯\\\_(ツ)\_/¯**
 
 
 If you like this, check out <a href="https://modrinth.com/user/SirQuestalot" target="_blank" rel="noopener noreferrer">my other projects</a>
