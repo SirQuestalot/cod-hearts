@@ -4,9 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'LICENSE*'
-      - 'license*'
-      - 'License*'
+      - 'LICENSE.txt'
   workflow_dispatch:
 
 jobs:
@@ -24,29 +22,16 @@ jobs:
         run: |
           set -euo pipefail
 
-          echo "Fetching license info from GitHub..."
           LICENSE_JSON=$(curl -sS \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2026-03-10" \
             "https://api.github.com/repos/${REPO}/license")
 
-          echo "Raw GitHub response:"
-          echo "$LICENSE_JSON" | jq .
-
           SPDX_ID=$(echo "$LICENSE_JSON" | jq -r '.license.spdx_id // empty')
           LICENSE_NAME=$(echo "$LICENSE_JSON" | jq -r '.license.name // empty')
-          LICENSE_PATH=$(echo "$LICENSE_JSON" | jq -r '.path // empty')
+          LICENSE_URL="https://github.com/${REPO}/blob/main/LICENSE.txt"
 
-          if [ -z "$LICENSE_PATH" ]; then
-            echo "Error: Could not determine license file path."
-            exit 1
-          fi
-
-          LICENSE_URL="https://github.com/${REPO}/blob/${{ github.ref_name }}/${LICENSE_PATH}"
-          echo "License file path: $LICENSE_PATH"
-          echo "License URL: $LICENSE_URL"
-
-          # --- Attempt 1: Use SPDX ID ---
+          # --- Attempt 1: SPDX ID ---
           if [ -n "$SPDX_ID" ] && [ "$SPDX_ID" != "NOASSERTION" ] && [ "$SPDX_ID" != "null" ]; then
             echo "Attempting SPDX license: $SPDX_ID"
 
@@ -56,9 +41,6 @@ jobs:
               -H "Content-Type: application/json" \
               -d "{\"license_id\": \"$SPDX_ID\", \"license_url\": \"$LICENSE_URL\"}")
 
-            echo "Modrinth HTTP status (SPDX attempt): $HTTP_CODE"
-            cat /tmp/modrinth_response.txt
-
             if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
               echo "License sync completed successfully using SPDX ID."
               exit 0
@@ -66,16 +48,11 @@ jobs:
 
             echo "::warning::SPDX ID '$SPDX_ID' was rejected by Modrinth. Falling back to custom license."
           else
-            echo "::warning::No valid SPDX ID detected by GitHub. Falling back to custom license."
+            echo "::warning::No valid SPDX ID detected. Falling back to custom license."
           fi
 
-          # --- Attempt 2: Fallback to Custom ---
-          # Use the long name from GitHub when available, otherwise a generic label
-          if [ -n "$LICENSE_NAME" ] && [ "$LICENSE_NAME" != "null" ]; then
-            CUSTOM_ID="$LICENSE_NAME"
-          else
-            CUSTOM_ID="Custom"
-          fi
+          # --- Attempt 2: Custom fallback ---
+          CUSTOM_ID="${LICENSE_NAME:-Custom}"
 
           echo "Falling back to custom license: $CUSTOM_ID"
 
@@ -85,11 +62,9 @@ jobs:
             -H "Content-Type: application/json" \
             -d "{\"license_id\": \"$CUSTOM_ID\", \"license_url\": \"$LICENSE_URL\"}")
 
-          echo "Modrinth HTTP status (custom fallback): $HTTP_CODE"
-          cat /tmp/modrinth_response.txt
-
           if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
-            echo "Error: Modrinth API request failed even with custom license."
+            echo "Error: Modrinth API request failed"
+            cat /tmp/modrinth_response.txt
             exit 1
           fi
 
