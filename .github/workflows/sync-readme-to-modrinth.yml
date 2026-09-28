@@ -19,9 +19,23 @@ jobs:
           MODRINTH_TOKEN: ${{ secrets.MODRINTH_PROJECT_READWRITE_TOKEN }}
           PROJECT_SLUG: ${{ github.event.repository.name }}
         run: |
+          set -euo pipefail
+
           BODY=$(jq -Rs . < README.md)
 
-          curl -sS -X PATCH "https://api.modrinth.com/v2/project/${PROJECT_SLUG}" \
+          echo "Sending README body to Modrinth..."
+          HTTP_CODE=$(curl -sS -o /tmp/modrinth_response.txt -w "%{http_code}" \
+            -X PATCH "https://api.modrinth.com/v2/project/${PROJECT_SLUG}" \
             -H "Authorization: $MODRINTH_TOKEN" \
             -H "Content-Type: application/json" \
-            -d "{\"body\": $BODY}"
+            -d "{\"body\": $BODY}")
+
+          echo "Modrinth HTTP status: $HTTP_CODE"
+          cat /tmp/modrinth_response.txt
+
+          if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
+            echo "Error: Modrinth API request failed"
+            exit 1
+          fi
+
+          echo "README sync completed successfully."
