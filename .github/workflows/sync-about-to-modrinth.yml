@@ -1,0 +1,54 @@
+name: Sync About to Modrinth
+
+on:
+  workflow_dispatch:
+  # Enable this when the publish workflow exists:
+  # workflow_run:
+  #   workflows: ["Publish to Modrinth"]   # must match that workflow's name: exactly
+  #   types:
+  #     - completed
+
+jobs:
+  sync:
+    # Only run on manual dispatch, or when the watched workflow succeeded:
+    # if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Update Modrinth project tagline
+        env:
+          MODRINTH_TOKEN: ${{ secrets.MODRINTH_PROJECT_READWRITE_TOKEN }}
+          PROJECT_SLUG: ${{ github.event.repository.name }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          ABOUT=$(curl -sS \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2026-03-10" \
+            "https://api.github.com/repos/${REPO}" \
+            | jq -r '.description // empty')
+
+          if [ -z "$ABOUT" ]; then
+            echo "GitHub repo has no description set. Skipping."
+            exit 0
+          fi
+
+          echo "GitHub About: $ABOUT"
+
+          HTTP_CODE=$(curl -sS -o /tmp/modrinth_response.txt -w "%{http_code}" \
+            -X PATCH "https://api.modrinth.com/v2/project/${PROJECT_SLUG}" \
+            -H "Authorization: $MODRINTH_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n --arg d "$ABOUT" '{description: $d}')")
+
+          echo "Modrinth HTTP status: $HTTP_CODE"
+          cat /tmp/modrinth_response.txt
+
+          if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
+            echo "Error: Modrinth API request failed"
+            exit 1
+          fi
+
+          echo "Tagline sync completed successfully."
