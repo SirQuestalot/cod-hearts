@@ -1,0 +1,41 @@
+name: Sync Icon to Modrinth
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'pack.png'
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Upscale and upload icon
+        env:
+          MODRINTH_TOKEN: ${{ secrets.MODRINTH_PROJECT_READWRITE_TOKEN }}
+          PROJECT_SLUG: ${{ github.event.repository.name }}
+        run: |
+          set -euo pipefail
+
+          magick pack.png -scale 1000% /tmp/icon.png
+
+          echo "Uploading upscaled icon to Modrinth..."
+          HTTP_CODE=$(curl -sS -o /tmp/modrinth_response.txt -w "%{http_code}" \
+            -X PATCH "https://api.modrinth.com/v2/project/${PROJECT_SLUG}/icon?ext=png" \
+            -H "Authorization: $MODRINTH_TOKEN" \
+            -H "Content-Type: image/png" \
+            --data-binary @/tmp/icon.png)
+
+          echo "Modrinth HTTP status: $HTTP_CODE"
+          cat /tmp/modrinth_response.txt
+
+          if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
+            echo "Error: Modrinth API request failed"
+            exit 1
+          fi
+
+          echo "Icon sync completed successfully."
