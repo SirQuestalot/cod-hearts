@@ -24,7 +24,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          magick pack.png -scale 1000% /tmp/icon.png
+          convert pack.png -scale 1000% /tmp/icon.png
 
           echo "Uploading upscaled icon to Modrinth..."
           HTTP_CODE=$(curl -sS -o /tmp/modrinth_response.txt -w "%{http_code}" \
