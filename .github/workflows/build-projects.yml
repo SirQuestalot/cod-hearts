@@ -1,0 +1,199 @@
+name: Build Resource Packs
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Which meta_lookup rows to build
+        type: choice
+        options: [single, list, all]
+        default: single
+      version_single:
+        description: One label from meta_lookup.txt (mode=single)
+        type: string
+        required: false
+      version_list:
+        description: Comma-separated labels (mode=list)
+        type: string
+        required: false
+      bump:
+        description: How to choose the version number
+        type: choice
+        options: [patch, feature, manual]
+        default: patch
+      version_override:
+        description: Full version number (only mode=single and bump=manual)
+        type: string
+        required: false
+      include_mods:
+        description: Include mods/ overlay when pack_format is set (non-ancient)
+        type: boolean
+        default: true
+      changelog:
+        description: Changelog body (stored in manifest for publish)
+        type: string
+        required: true
+
+env:
+  LOOKUP_FILE: .github/meta_lookup.txt
+  CONTENT_ROOT: core/content
+  META_ROOT: core/meta
+  MODS_ROOT: mods
+  MODRINTH_API: https://api.modrinth.com/v2
+  GITHUB_API: https://api.github.com
+  GITHUB_API_VERSION: "2026-03-10"
+  OUT_DIR: build/dist
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Validate inputs and resolve labels
+        id: plan
+        env:
+          MODE: ${{ inputs.mode }}
+          VERSION_SINGLE: ${{ inputs.version_single }}
+          VERSION_LIST: ${{ inputs.version_list }}
+          BUMP: ${{ inputs.bump }}
+          VERSION_OVERRIDE: ${{ inputs.version_override }}
+          CHANGELOG: ${{ inputs.changelog }}
+        run: |
+          set -euo pipefail
+
+          if [ "$MODE" = "single" ] && [ -z "${VERSION_SINGLE// }" ]; then
+            echo "Error: version_single is required when mode=single"; exit 1
+          fi
+          if [ "$MODE" = "list" ] && [ -z "${VERSION_LIST// }" ]; then
+            echo "Error: version_list is required when mode=list"; exit 1
+          fi
+          if [ "$BUMP" = "manual" ]; then
+            if [ "$MODE" != "single" ]; then
+              echo "Error: bump=manual is only allowed when mode=single"; exit 1
+            fi
+            if [ -z "${VERSION_OVERRIDE// }" ]; then
+              echo "Error: version_override is required when bump=manual"; exit 1
+            fi
+          fi
+          if [ -z "${CHANGELOG// }" ]; then
+            echo "Error: changelog is required"; exit 1
+          fi
+          if [ ! -f "$LOOKUP_FILE" ]; then
+            echo "Error: $LOOKUP_FILE not found"; exit 1
+          fi
+          if [ ! -f .github/scripts/build_resource_packs.py ]; then
+            echo "Error: .github/scripts/build_resource_packs.py not found"; exit 1
+          fi
+
+          mapfile -t ALL_LABELS < <(
+            sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$LOOKUP_FILE" \
+              | cut -d',' -f1 | sed 's/[[:space:]]*$//'
+          )
+
+          resolve_label() {
+            local want="$1" label
+            for label in "${ALL_LABELS[@]}"; do
+              [ "$label" = "$want" ] && { echo "$label"; return 0; }
+            done
+            echo "Error: label '$want' not found in $LOOKUP_FILE" >&2
+            return 1
+          }
+
+          TARGETS=()
+          case "$MODE" in
+            single) TARGETS+=("$(resolve_label "$(echo "$VERSION_SINGLE" | xargs)")") ;;
+            list)
+              IFS=',' read -ra RAW <<< "$VERSION_LIST"
+              for item in "${RAW[@]}"; do
+                item="$(echo "$item" | xargs)"
+                [ -z "$item" ] && continue
+                TARGETS+=("$(resolve_label "$item")")
+              done
+              [ "${#TARGETS[@]}" -gt 0 ] || { echo "Error: version_list produced no labels"; exit 1; }
+              ;;
+            all) TARGETS=("${ALL_LABELS[@]}") ;;
+            *) echo "Error: unknown mode '$MODE'"; exit 1 ;;
+          esac
+
+          echo "Targets (${#TARGETS[@]}): ${TARGETS[*]}"
+          {
+            echo "targets<<EOF"
+            printf '%s\n' "${TARGETS[@]}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Fetch GitHub description and license
+        id: github_meta
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          REPO_JSON=$(curl -sS \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: $GITHUB_API_VERSION" \
+            "$GITHUB_API/repos/$REPO")
+
+          ABOUT=$(echo "$REPO_JSON" | jq -r '.description // empty')
+
+          DESCRIPTION=$(python3 - <<'PY' "$ABOUT"
+          import re, sys
+          about = sys.argv[1] if len(sys.argv) > 1 else ""
+          plain = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.!?'\-,…]*$")
+          parts = about.split()
+          while parts and not plain.match(parts[-1]):
+              parts.pop()
+          print(" ".join(parts), end="")
+          PY
+          )
+          [ -n "$DESCRIPTION" ] || DESCRIPTION="$ABOUT"
+
+          LICENSE_JSON=$(curl -sS \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: $GITHUB_API_VERSION" \
+            "$GITHUB_API/repos/$REPO/license")
+
+          LICENSE_NAME=$(echo "$LICENSE_JSON" | jq -r '.license.name // empty')
+          LICENSE_SPDX=$(echo "$LICENSE_JSON" | jq -r '.license.spdx_id // empty')
+          if [ -n "$LICENSE_NAME" ] && [ "$LICENSE_NAME" != "null" ]; then
+            LICENSE="$LICENSE_NAME"
+          elif [ -n "$LICENSE_SPDX" ] && [ "$LICENSE_SPDX" != "null" ] && [ "$LICENSE_SPDX" != "NOASSERTION" ]; then
+            LICENSE="$LICENSE_SPDX"
+          else
+            LICENSE="See LICENSE.txt"
+          fi
+
+          echo "Description: $DESCRIPTION"
+          echo "License: $LICENSE"
+          {
+            echo "description<<EOF"
+            printf '%s\n' "$DESCRIPTION"
+            echo "EOF"
+            echo "license<<EOF"
+            printf '%s\n' "$LICENSE"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build zips and manifest
+        env:
+          PROJECT_SLUG: ${{ github.event.repository.name }}
+          BUMP: ${{ inputs.bump }}
+          VERSION_OVERRIDE: ${{ inputs.version_override }}
+          INCLUDE_MODS: ${{ inputs.include_mods }}
+          CHANGELOG: ${{ inputs.changelog }}
+          DESCRIPTION: ${{ steps.github_meta.outputs.description }}
+          LICENSE: ${{ steps.github_meta.outputs.license }}
+          TARGETS: ${{ steps.plan.outputs.targets }}
+        run: python3 .github/scripts/build_resource_packs.py
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: resource-pack-build
+          path: build/dist/
+          if-no-files-found: error
