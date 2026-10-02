@@ -1,16 +1,36 @@
 # =============================================================================
-# WORKFLOW NAME
-# -----------------------------------------------------------------------------
 # Shown in the GitHub Actions tab. Also the string other workflows would use
-# if they watched this one with workflow_run (e.g. workflows: ["Build Resource Packs"]).
+# if they watched with workflow_run (e.g. workflows: ["Build Projects"]).
+# -----------------------------------------------------------------------------
+# Manual workflow: pick meta_lookup rows, build resource-pack zips, write
+# manifest.json, upload everything as a GitHub Actions artifact.
+# -----------------------------------------------------------------------------
+# Does NOT publish to Modrinth (that is a separate workflow that downloads
+# this run's artifact by run id).
+# -----------------------------------------------------------------------------
+# Companion script (real build logic):
+#   .github/scripts/build_projects.py
 # =============================================================================
-name: Build Resource Packs
+name: Build Projects
+
+# run-name examples:
+#   Build: single | 26.3 | patch
+#   Build: single | 1.6.x-1.8.x | manual (1.0.2)
+#   Build: range | 1.6.x-1.8.x, 26.3 | patch
+#   Build: all | all | feature
+run-name: >-
+  Build: ${{ inputs.mode }} | ${{
+    inputs.mode == 'single' && inputs.mc_version_label_single
+    || inputs.mode == 'range' && inputs.mc_version_label_range
+    || 'all'
+  }} | ${{
+    inputs.bump == 'manual' && format('manual ({0})', inputs.version_override)
+    || inputs.bump
+  }}
 
 # =============================================================================
-# TRIGGERS — when is this workflow allowed to start?
-# -----------------------------------------------------------------------------
 # Only workflow_dispatch: a human (or API call) starts it from the Actions UI.
-# No push/tag/schedule — we do not want accidental builds.
+# No push/tag/schedule — avoids accidental builds.
 # =============================================================================
 on:
   workflow_dispatch:
@@ -20,56 +40,65 @@ on:
     # -------------------------------------------------------------------------
     inputs:
 
-      # How many meta_lookup rows to build this run.
-      # single = one label | list = several | all = every row in the file
+      # How many meta_lookup rows to build this run
+      # single = one label | range = several | all = every version in the file
       mode:
-        description: Which meta_lookup rows to build
-        type: choice                 # dropdown in the UI
-        options: [single, list, all]
+        description: Which mc versions to build
+        type: choice
+        options: [single, range, all]
         default: single
 
-      # Used only when mode=single. Must match the first column of a lookup row.
-      # Example: 26.3   or   1.21.9-1.21.10
-      version_single:
-        description: One label from meta_lookup.txt (mode=single)
-        type: string
-        required: false              # required-ness is enforced in a step below
-
-      # Used only when mode=list. Comma-separated labels.
-      # Example: 26.3, 26.2, 1.21.11
-      version_list:
-        description: Comma-separated labels (mode=list)
+      # Must match the first column of a row in meta_lookup.txt
+      # Example: 26.3 or 1.21.9-1.21.10
+      mc_version_label_single:
+        description: (for mode=single) One mc version label from meta_lookup.txt
         type: string
         required: false
+        # required-ness is enforced in a step below
+        # Required when mode=single
 
-      # How to pick the Modrinth-style version number (major.minor.patch):
-      #   patch  → bump last digit from the matched previous version
-      #   feature→ bump middle digit
-      #   manual → use version_override exactly (single mode only)
+      # Exactly two comma-separated mc version labels from meta_lookup.txt
+      # (order does not matter).
+      # Builds every label between them in file order, inclusive.
+      # Example: 1.6.x-1.8.x, 26.3
+      mc_version_label_range:
+        description: (for mode=range) Comma-separated mc versions labels from meta_lookup.txt
+        type: string
+        required: false
+        # required-ness is enforced in a step below
+        # Required when mode=range
+
+      # Affects the new version number (major.minor.patch):
+      # major remains unaffected as directly tied to packformat number
+      #   feature → bump .minor and drop patch to zero
+      #   patch   → bump .patch
+      #   manual  → use version_override exactly (mode=single only)
       bump:
-        description: How to choose the version number
+        description: New version type
         type: choice
         options: [patch, feature, manual]
         default: patch
 
-      # Full version string when bump=manual, e.g. 97.0.0
+      # Full manual version string when bump=manual (i.e. 97.0.0)
+      # for manual control over version format migration, etc
       version_override:
-        description: Full version number (only mode=single and bump=manual)
+        description: Full version number (for bump=manual)
         type: string
         required: false
+        # required-ness is enforced in a step below
+        # Required when bump=manual
 
       # If true, merge the mods/ tree into packs that have a numeric pack_format
-      # (skipped for ancient nan-format rows).
       include_mods:
-        description: Include mods/ overlay when pack_format is set (non-ancient)
+        description: Include mods/ assets (1.6+ only)
         type: boolean
         default: true
 
-      # Free text stored in manifest.json as the changelog body (after auto header).
+      # Text stored in manifest.json as the changelog body (with auto header)
       changelog:
-        description: Changelog body (stored in manifest for publish)
+        description: Changelog body (diff notes)
         type: string
-        required: true               # GitHub requires non-empty if required: true
+        required: true
 
 # =============================================================================
 # JOB-LEVEL ENVIRONMENT
@@ -77,17 +106,19 @@ on:
 # Available to every step unless a step overrides a name.
 # Keeps paths/API bases in one place instead of scattering magic strings.
 # The Python script reads these same names.
+# Paths are relative to the repo root after checkout.
 # =============================================================================
 env:
-  LOOKUP_FILE: .github/meta_lookup.txt   # label, pack_format, [game versions]
-  CONTENT_ROOT: core/content             # range folders with assets
-  META_ROOT: core/meta                   # range folders with one template file each
-  MODS_ROOT: mods                        # optional overlay (e.g. farmersdelight)
+  LOOKUP_FILE: .github/meta_lookup.txt
+  CONTENT_ROOT: core/content
+  META_ROOT: core/meta
+  MODS_ROOT: mods
+  BUILD_SCRIPT: .github/scripts/build_projects.py
   MODRINTH_API: https://api.modrinth.com/v2
   GITHUB_API: https://api.github.com
-  # Pin GitHub REST API version so field shapes stay stable over time
-  GITHUB_API_VERSION: "2026-03-10"
-  OUT_DIR: build/dist                    # where zips + manifest.json are written
+  OUT_DIR: build/dist
+  # where zips + manifest.json are written on the VM.
+  # upload-artifact packs this folder for the workflow run.
 
 # =============================================================================
 # JOBS
@@ -96,7 +127,7 @@ env:
 # =============================================================================
 jobs:
   build:
-    # Fresh Ubuntu VM for this run (ephemeral; install nothing permanent)
+    # Fresh Ubuntu VM (ephemeral; wipes after run)
     runs-on: ubuntu-latest
 
     steps:
@@ -113,43 +144,43 @@ jobs:
       # -----------------------------------------------------------------------
       # STEP: Validate inputs and resolve labels
       # -----------------------------------------------------------------------
-      # id: plan  → later steps can read steps.plan.outputs.targets
+      # Validate the form inputs and compute the list of mc version labels to build.
       #
       # This step is pure bash. It does NOT build zips. It only:
-      #   1) Enforces input combinations (single needs a label, etc.)
-      #   2) Reads every label from meta_lookup.txt
-      #   3) Builds the list TARGETS of labels this run will process
+      #   1) Enforces input combinations (single needs an mc version label, range needs two, etc.)
+      #   2) Reads every mc version label from meta_lookup.txt
+      #   3) Builds the list TARGETS of mc version labels this run will process
       #   4) Writes that list to GITHUB_OUTPUT as a multiline "targets" value
+      #       - steps.plan.outputs.targets (newline-separated labels for the script)
       # -----------------------------------------------------------------------
       - name: Validate inputs and resolve labels
         id: plan
         env:
           # Copy inputs into env vars for simpler shell quoting
           MODE: ${{ inputs.mode }}
-          VERSION_SINGLE: ${{ inputs.version_single }}
-          VERSION_LIST: ${{ inputs.version_list }}
+          MC_VERSION_LABEL_SINGLE: ${{ inputs.mc_version_label_single }}
+          MC_VERSION_LABEL_RANGE: ${{ inputs.mc_version_label_range }}
           BUMP: ${{ inputs.bump }}
           VERSION_OVERRIDE: ${{ inputs.version_override }}
           CHANGELOG: ${{ inputs.changelog }}
         run: |
           # -e: exit if any command fails
           # -u: exit if we reference an unset variable
-          # -o pipefail: fail if any part of a pipeline fails
+          # -o pipefail: fail if any part of a pipeline fails, not just the last stage
           set -euo pipefail
 
-          # --- Input rules (mirror the product decisions we locked in) ---
+          # --- Enforce input combinations ------------------------------------
 
-          if [ "$MODE" = "single" ] && [ -z "${VERSION_SINGLE// }" ]; then
-            echo "Error: version_single is required when mode=single"
+          if [ "$MODE" = "single" ] && [ -z "${MC_VERSION_LABEL_SINGLE// }" ]; then
+            echo "Error: mc_version_label_single is required when mode=single"
             exit 1
           fi
 
-          if [ "$MODE" = "list" ] && [ -z "${VERSION_LIST// }" ]; then
-            echo "Error: version_list is required when mode=list"
+          if [ "$MODE" = "range" ] && [ -z "${MC_VERSION_LABEL_RANGE// }" ]; then
+            echo "Error: mc_version_label_range is required when mode=range"
             exit 1
           fi
 
-          # manual bump only makes sense for one row (one version_override)
           if [ "$BUMP" = "manual" ]; then
             if [ "$MODE" != "single" ]; then
               echo "Error: bump=manual is only allowed when mode=single"
@@ -161,6 +192,7 @@ jobs:
             fi
           fi
 
+          # verifies changelog input is not whitespace-only values or empty API triggers
           if [ -z "${CHANGELOG// }" ]; then
             echo "Error: changelog is required"
             exit 1
@@ -171,12 +203,12 @@ jobs:
             exit 1
           fi
 
-          if [ ! -f .github/scripts/build_resource_packs.py ]; then
-            echo "Error: .github/scripts/build_resource_packs.py not found"
+          if [ ! -f "$BUILD_SCRIPT" ]; then
+            echo "Error: $BUILD_SCRIPT not found"
             exit 1
           fi
 
-          # --- Load all labels from the lookup file ---
+          # --- Load all mc version labels from the meta_lookup.txt (first column) ---
           # For each line: strip comments, skip blanks, take CSV field 1, trim spaces.
           # mapfile puts lines into a bash array ALL_LABELS.
           mapfile -t ALL_LABELS < <(
@@ -185,7 +217,7 @@ jobs:
               | sed 's/[[:space:]]*$//'
           )
 
-          # Helper: return the label if it exists in ALL_LABELS, else error.
+          # Helper: print and return the requested mc version label if it exists in ALL_LABELS, else error.
           resolve_label() {
             local want="$1" label
             for label in "${ALL_LABELS[@]}"; do
@@ -195,29 +227,109 @@ jobs:
             return 1
           }
 
-          # --- Build TARGETS array from mode ---
+          # Helper: index of a label in ALL_LABELS (0-based), or fail
+          index_of_label() {
+            local want="$1" i
+            for i in "${!ALL_LABELS[@]}"; do
+              if [ "${ALL_LABELS[$i]}" = "$want" ]; then
+                echo "$i"
+                return 0
+              fi
+            done
+            echo "Error: label '$want' not found in $LOOKUP_FILE" >&2
+            return 1
+          }
+
+          # =============================================================================
+          # Build TARGETS from mode
+          # -----------------------------------------------------------------------------
+          # TARGETS = ordered list of meta_lookup labels this workflow run will build.
+          # Starts empty; the case below fills it from MODE + the relevant inputs.
+          # =============================================================================
           TARGETS=()
+
           case "$MODE" in
+
+            # ---------------------------------------------------------------------------
+            # mode=single
+            # ---------------------------------------------------------------------------
+            # User supplied one label (e.g. "26.3").
+            # 1) Trim whitespace from the input with xargs.
+            # 2) resolve_label: confirm it exists in ALL_LABELS (else error).
+            # 3) Append that one label to TARGETS.
+            # ---------------------------------------------------------------------------
             single)
-              # xargs trims leading/trailing whitespace from the input field
-              TARGETS+=("$(resolve_label "$(echo "$VERSION_SINGLE" | xargs)")")
+              TARGETS+=("$(resolve_label "$(echo "$MC_VERSION_LABEL_SINGLE" | xargs)")")
               ;;
-            list)
-              # Split on commas; resolve each non-empty piece
-              IFS=',' read -ra RAW <<< "$VERSION_LIST"
+
+            # ---------------------------------------------------------------------------
+            # mode=range
+            # ---------------------------------------------------------------------------
+            # User supplied two endpoints in one string, comma-separated, e.g.
+            #   "1.6.x-1.8.x, 26.3"
+            # We take every label in ALL_LABELS from one endpoint through the other
+            # (inclusive), using **file order**, not Minecraft version sorting.
+            # Endpoint order in the input does not matter.
+            # ---------------------------------------------------------------------------
+            range)
+              # Collect non-empty pieces after splitting on commas
+              ENDPOINTS=()
+              # IFS=',' → split on commas only for this read
+              # -ra RAW → read into array RAW
+              # <<< "$MC_VERSION_LABEL_RANGE" → use that string as input
+              IFS=',' read -ra RAW <<< "$MC_VERSION_LABEL_RANGE"
+
               for item in "${RAW[@]}"; do
+                # Trim spaces around each piece (" 26.3" → "26.3")
                 item="$(echo "$item" | xargs)"
+                # Skip empty pieces (e.g. trailing comma)
                 [ -z "$item" ] && continue
-                TARGETS+=("$(resolve_label "$item")")
+                ENDPOINTS+=("$item")
               done
-              if [ "${#TARGETS[@]}" -eq 0 ]; then
-                echo "Error: version_list produced no labels"
+
+              # Must be exactly two endpoints — not 0, 1, or 3+
+              if [ "${#ENDPOINTS[@]}" -ne 2 ]; then
+                echo "Error: mode=range requires exactly two comma-separated labels (start, end)"
+                echo "Got ${#ENDPOINTS[@]} endpoint(s) from: $MC_VERSION_LABEL_RANGE"
                 exit 1
               fi
+
+              # Confirm both labels exist in the lookup file (errors if not)
+              START_LABEL="$(resolve_label "${ENDPOINTS[0]}")"
+              END_LABEL="$(resolve_label "${ENDPOINTS[1]}")"
+
+              # Numeric positions of those labels inside ALL_LABELS (0-based)
+              START_I="$(index_of_label "$START_LABEL")"
+              END_I="$(index_of_label "$END_LABEL")"
+
+              # Normalize so START_I is the earlier index in the file and END_I the later.
+              # That way "26.3, 1.6.x-1.8.x" and "1.6.x-1.8.x, 26.3" select the same slice.
+              if [ "$START_I" -gt "$END_I" ]; then
+                TMP="$START_I"
+                START_I="$END_I"
+                END_I="$TMP"
+              fi
+
+              # How many labels are in the inclusive span [START_I, END_I]
+              LENGTH=$((END_I - START_I + 1))
+
+              # Bash array slice: from index START_I, take LENGTH elements
+              # Example: ALL_LABELS indices 0..N, START_I=2, END_I=5 → labels at 2,3,4,5
+              TARGETS=("${ALL_LABELS[@]:$START_I:$LENGTH}")
               ;;
+
+            # ---------------------------------------------------------------------------
+            # mode=all
+            # ---------------------------------------------------------------------------
+            # No extra input. Build every label in the lookup file, same order as the file.
+            # ---------------------------------------------------------------------------
             all)
               TARGETS=("${ALL_LABELS[@]}")
               ;;
+
+            # ---------------------------------------------------------------------------
+            # Anything else (should not happen if the workflow input choice is trusted)
+            # ---------------------------------------------------------------------------
             *)
               echo "Error: unknown mode '$MODE'"
               exit 1
@@ -226,29 +338,35 @@ jobs:
 
           echo "Targets (${#TARGETS[@]}): ${TARGETS[*]}"
 
-          # --- Publish TARGETS to later steps ---
-          # Multiline output syntax:
-          #   name<<EOF
+          # --- Pass TARGETS to later steps via GITHUB_OUTPUT -----------------
+          # Bash variables do not carry across steps. Writing to GITHUB_OUTPUT
+          # makes steps.plan.outputs.targets available to the rest of the job.
+          #
+          # Multiline form:
+          #   <name><<NAME_END
           #   line1
           #   line2
-          #   EOF
-          # Later: steps.plan.outputs.targets  (newline-separated labels)
+          #   NAME_END
+          # The marker NAME_END is arbitrary; it must match on the closing line.
           {
-            echo "targets<<EOF"
+            echo "targets<<TARGETS_END"
             printf '%s\n' "${TARGETS[@]}"
-            echo "EOF"
+            echo "TARGETS_END"
           } >> "$GITHUB_OUTPUT"
 
       # -----------------------------------------------------------------------
       # STEP: Fetch GitHub description and license
       # -----------------------------------------------------------------------
-      # Uses the automatic github.token (no Modrinth secret needed here).
+      # Load repo About + detected license from GitHub for pack template fields
+      # {{DESCRIPTION}} and {{LICENSE}}.
       #
-      # Description: repo "About" text, with trailing decorative tokens removed
-      #              so pack.mcmeta gets a plain sentence.
+      # Description: repo "About" text; non-ASCII tokens dropped.
       # License:     GitHub’s detected license long name, else SPDX, else fallback.
       #
       # Both are written to outputs for the build script as DESCRIPTION / LICENSE.
+      # Outputs:
+      #   steps.github_meta.outputs.description
+      #   steps.github_meta.outputs.license
       # -----------------------------------------------------------------------
       - name: Fetch GitHub description and license
         id: github_meta
@@ -258,40 +376,48 @@ jobs:
         run: |
           set -euo pipefail
 
-          # GET /repos/{owner}/{repo} → JSON including .description
+          # Repo metadata JSON (includes .description = GitHub "About")
           REPO_JSON=$(curl -sS \
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer $GH_TOKEN" \
-            -H "X-GitHub-Api-Version: $GITHUB_API_VERSION" \
             "$GITHUB_API/repos/$REPO")
 
           ABOUT=$(echo "$REPO_JSON" | jq -r '.description // empty')
 
-          # Strip trailing tokens that are not plain words (kaomoji / symbols).
-          # Keeps tokens that start with alnum and only use basic punctuation.
-          DESCRIPTION=$(python3 - <<'PY' "$ABOUT"
-          import re, sys
+          # Keep only whitespace-separated tokens that are fully ASCII.
+          # Non-ASCII tokens (kaomoji, symbols, mixed emoji words) are dropped
+          # due to rendering improperly within minecraft.
+          #
+          # python3 - <<'STRIP_END'  →  shell "heredoc": the following lines are
+          # fed to Python as its program text (stdin) until a line that is only
+          # STRIP_END. Quotes on 'STRIP_END' mean the shell does not expand
+          # $variables inside the block before Python sees them.
+          DESCRIPTION=$(python3 - <<'STRIP_END' "$ABOUT"
+          import sys
           about = sys.argv[1] if len(sys.argv) > 1 else ""
-          plain = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.!?'\-,…]*$")
           parts = about.split()
-          while parts and not plain.match(parts[-1]):
-              parts.pop()
-          print(" ".join(parts), end="")
-          PY
+          kept = [p for p in parts if p.isascii()]
+          print(" ".join(kept), end="")
+          STRIP_END
           )
-          # If stripping removed everything, fall back to raw About
-          [ -n "$DESCRIPTION" ] || DESCRIPTION="$ABOUT"
+          # If everything was stripped, error
+          if [ -z "${DESCRIPTION// }" ]; then
+            echo "Error: GitHub About produced an empty description after stripping non-ASCII tokens"
+            echo "Raw About: ${ABOUT:-<empty>}"
+            exit 1
+          fi
 
+          # License detection JSON from GitHub
           # GET /repos/{owner}/{repo}/license → detected license metadata
           LICENSE_JSON=$(curl -sS \
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer $GH_TOKEN" \
-            -H "X-GitHub-Api-Version: $GITHUB_API_VERSION" \
             "$GITHUB_API/repos/$REPO/license")
 
           LICENSE_NAME=$(echo "$LICENSE_JSON" | jq -r '.license.name // empty')
           LICENSE_SPDX=$(echo "$LICENSE_JSON" | jq -r '.license.spdx_id // empty')
 
+          # Prefer human-readable name, then SPDX id, then a safe fallback
           if [ -n "$LICENSE_NAME" ] && [ "$LICENSE_NAME" != "null" ]; then
             LICENSE="$LICENSE_NAME"
           elif [ -n "$LICENSE_SPDX" ] && [ "$LICENSE_SPDX" != "null" ] && [ "$LICENSE_SPDX" != "NOASSERTION" ]; then
@@ -303,14 +429,14 @@ jobs:
           echo "Description: $DESCRIPTION"
           echo "License: $LICENSE"
 
-          # Multiline outputs for the next step / script
+          # Multiline step outputs (same marker style as targets above)
           {
-            echo "description<<EOF"
+            echo "description<<DESCRIPTION_END"
             printf '%s\n' "$DESCRIPTION"
-            echo "EOF"
-            echo "license<<EOF"
+            echo "DESCRIPTION_END"
+            echo "license<<LICENSE_END"
             printf '%s\n' "$LICENSE"
-            echo "EOF"
+            echo "LICENSE_END"
           } >> "$GITHUB_OUTPUT"
 
       # -----------------------------------------------------------------------
@@ -323,6 +449,8 @@ jobs:
       #   - render template placeholders
       #   - zip packs
       #   - write manifest.json
+      # Manifest entries include version_number, game_versions, changelog, file
+      # name, etc., so the publish workflow can upload without rebuilding.
       #
       # Environment variables are the script’s only configuration interface.
       # -----------------------------------------------------------------------
@@ -339,7 +467,7 @@ jobs:
           TARGETS: ${{ steps.plan.outputs.targets }}
           # LOOKUP_FILE, CONTENT_ROOT, META_ROOT, MODS_ROOT, MODRINTH_API, OUT_DIR
           # come from the job-level env: block above
-        run: python3 .github/scripts/build_resource_packs.py
+        run: python3 "$BUILD_SCRIPT"
 
       # -----------------------------------------------------------------------
       # STEP: Upload artifacts
@@ -348,11 +476,11 @@ jobs:
       # for this workflow run. You can download them from the run page, or the
       # publish workflow can pull them with actions/download-artifact + run-id.
       #
-      # name: resource-pack-build  ← publish workflow must use this same name
+      # name: project-build  ← publish workflow must use this same name
       # -----------------------------------------------------------------------
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: resource-pack-build
+          name: project-build
           path: build/dist/
           if-no-files-found: error   # fail the job if the script produced nothing
