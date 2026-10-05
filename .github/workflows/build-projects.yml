@@ -3,7 +3,7 @@
 # if they watched with workflow_run (e.g. workflows: ["Build Projects"]).
 # -----------------------------------------------------------------------------
 # Manual workflow: pick meta_lookup rows, build resource-pack zips, write
-# manifest.json, upload everything as a GitHub Actions artifact.
+# metadata.json, upload everything as a GitHub Actions artifact.
 # -----------------------------------------------------------------------------
 # Does NOT publish to Modrinth (that is a separate workflow that downloads
 # this run's artifact by run id).
@@ -94,7 +94,7 @@ on:
         type: boolean
         default: true
 
-      # Text stored in manifest.json as the changelog body (with auto header)
+      # Text stored in metadata.json as the changelog body (with auto header)
       changelog:
         description: Changelog body (diff notes)
         type: string
@@ -117,7 +117,7 @@ env:
   MODRINTH_API: https://api.modrinth.com/v2
   GITHUB_API: https://api.github.com
   OUT_DIR: build/dist
-  # where zips + manifest.json are written on the VM.
+  # where zips + metadata.json are written on the VM.
   # upload-artifact packs this folder for the workflow run.
 
 # =============================================================================
@@ -440,7 +440,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       # -----------------------------------------------------------------------
-      # STEP: Build zips and manifest
+      # STEP: Build zips and metadata
       # -----------------------------------------------------------------------
       # Hands off to the external Python script. All real build logic lives there:
       #   - parse lookup rows
@@ -448,13 +448,13 @@ jobs:
       #   - resolve version numbers from Modrinth API (or manual)
       #   - render template placeholders
       #   - zip packs
-      #   - write manifest.json
-      # Manifest entries include version_number, game_versions, changelog, file
+      #   - write metadata.json
+      # metadata entries include version_number, game_versions, changelog, file
       # name, etc., so the publish workflow can upload without rebuilding.
       #
       # Environment variables are the script’s only configuration interface.
       # -----------------------------------------------------------------------
-      - name: Build zips and manifest
+      - name: Build zips and metadata
         env:
           PROJECT_SLUG: ${{ github.event.repository.name }}
           BUMP: ${{ inputs.bump }}
@@ -472,7 +472,7 @@ jobs:
       # -----------------------------------------------------------------------
       # STEP: Upload artifacts
       # -----------------------------------------------------------------------
-      # Stores build/dist/ (all zips + manifest.json) on GitHub’s artifact storage
+      # Stores build/dist/ (all zips + metadata.json) on GitHub’s artifact storage
       # for this workflow run. You can download them from the run page, or the
       # publish workflow can pull them with actions/download-artifact + run-id.
       #
