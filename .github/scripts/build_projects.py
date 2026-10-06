@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-Build resource-pack zips + metadata.json from meta_lookup and core/ trees.
+Build resource-pack zips + metadata.json from mcmeta_lookup.json and core/ trees.
 
 Invoked by .github/workflows/build-projects.yml with configuration via env vars:
   LOOKUP_FILE, CONTENT_ROOT, META_ROOT, MODS_ROOT, MODRINTH_API,
   PROJECT_SLUG, BUMP, VERSION_OVERRIDE, INCLUDE_MODS, CHANGELOG,
   DESCRIPTION, LICENSE, TARGETS, OUT_DIR
 
-Does not publish to Modrinth — only writes zips + metadata under OUT_DIR.
+Does not publish to Modrinth — only writes zips + metadata.json under OUT_DIR.
 """
 
 from __future__ import annotations
@@ -53,41 +53,62 @@ def http_json(url: str, user_agent: str):
         return json.loads(raw) if raw else None
 
 
+# # =============================================================================
+# mcmeta_lookup.json loading
 # =============================================================================
-# meta_lookup.txt parsing
-# =============================================================================
-# Each non-comment line looks like:
-#   label, pack_format, [1.20.1, 1.20.2]
-# pack_format may be "nan" for ancient packs (no numeric format).
+# Root object keyed by label:
+#   {
+#     "26.3": { "pack_format": 97, "game_versions": ["26.3"] },
+#     "1.0-1.5.x": { "pack_format": null, "game_versions": ["1.0", ...] }
+#   }
+# pack_format: int or null (null = pre-pack-format / ancient).
 
 def parse_lookup(path: Path) -> dict:
     """
-    Parse LOOKUP_FILE into:
-      { label: { "label", "pack_format" (int|None), "game_versions": [str, ...] } }
+    Load LOOKUP_FILE JSON into:
+      { label: { "pack_format": int|None, "game_versions": [str, ...] } }
     """
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        raise SystemExit(f"Invalid JSON in {path}: {e}") from e
+
+    if not isinstance(data, dict):
+        raise SystemExit(f"Lookup root must be a JSON object: {path}")
+
     rows = {}
-    for line in path.read_text().splitlines():
-        # Strip inline comments and whitespace
-        line = line.split("#", 1)[0].strip()
-        if not line:
-            continue
+    for label, row in data.items():
+        if not isinstance(label, str) or not label:
+            raise SystemExit(f"lookup keys must be non-empty strings, got: {label!r}")
+        if not isinstance(row, dict):
+            raise SystemExit(f"lookup entry {label!r} must be an object")
 
-        # label, format, [versions...]
-        m = re.match(r"^([^,]+),\s*([^,]+),\s*\[(.*)\]\s*$", line)
-        if not m:
-            raise SystemExit(f"Bad lookup line: {line}")
+        if "pack_format" not in row or "game_versions" not in row:
+            raise SystemExit(
+                f"lookup entry {label!r} must have pack_format and game_versions"
+            )
 
-        label = m.group(1).strip()
-        fmt_s = m.group(2).strip()
-        # Pull version-like tokens out of the bracket list
-        versions = re.findall(r"[0-9]+(?:\.[0-9]+)*", m.group(3))
-        pack_format = None if fmt_s.lower() == "nan" else int(fmt_s)
+        pack_format = row["pack_format"]
+        if pack_format is not None and type(pack_format) is not int:
+            raise SystemExit(
+                f"lookup entry {label!r}: pack_format must be an integer or null"
+            )
+
+        game_versions = row["game_versions"]
+        if not isinstance(game_versions, list) or not game_versions:
+            raise SystemExit(
+                f"lookup entry {label!r}: game_versions must be a non-empty list"
+            )
+        if not all(isinstance(v, str) and v for v in game_versions):
+            raise SystemExit(
+                f"lookup entry {label!r}: game_versions must be a list of non-empty strings"
+            )
 
         rows[label] = {
-            "label": label,
             "pack_format": pack_format,
-            "game_versions": versions,
+            "game_versions": list(game_versions),
         }
+
     return rows
 
 
@@ -485,7 +506,7 @@ def main() -> None:
         print(f"Built {zip_path}")
         print(changelog)
 
-    # --- write metadata for the publish workflow -----------------------------
+    # --- write metadata.json for the publish workflow -----------------------------
     (out_dir / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
     print("\nWrote metadata.json")
 

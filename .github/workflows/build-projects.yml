@@ -2,8 +2,8 @@
 # Shown in the GitHub Actions tab. Also the string other workflows would use
 # if they watched with workflow_run (e.g. workflows: ["Build Projects"]).
 # -----------------------------------------------------------------------------
-# Manual workflow: pick meta_lookup rows, build resource-pack zips, write
-# metadata.json, upload everything as a GitHub Actions artifact.
+# Manual workflow: pick mcmeta_lookup.json rows, build resource-pack zips,
+# write metadata.json, upload everything as a GitHub Actions artifact.
 # -----------------------------------------------------------------------------
 # Does NOT publish to Modrinth (that is a separate workflow that downloads
 # this run's artifact by run id).
@@ -40,7 +40,7 @@ on:
     # -------------------------------------------------------------------------
     inputs:
 
-      # How many meta_lookup rows to build this run
+      # How many mcmeta_lookup.json rows to build this run
       # single = one label | range = several | all = every version in the file
       mode:
         description: Which mc versions to build
@@ -48,18 +48,18 @@ on:
         options: [single, range, all]
         default: single
 
-      # Must match the first column of a row in meta_lookup.txt
+      # Must match a top-level key in mcmeta_lookup.json
       # Example: 26.3 or 1.21.9-1.21.10
       mc_version_label_single:
-        description: (for mode=single) One mc version label from meta_lookup.txt
+        description: (for mode=single) One mc version label from mcmeta_lookup.json
         type: string
         required: false
         # required-ness is enforced in a step below
         # Required when mode=single
 
-      # Exactly two comma-separated mc version labels from meta_lookup.txt
+      # Exactly two comma-separated keys from mcmeta_lookup.json
       # (order does not matter).
-      # Builds every label between them in file order, inclusive.
+      # Builds every label between them in file key order, inclusive.
       # Example: 1.6.x-1.8.x, 26.3
       mc_version_label_range:
         description: (for mode=range) Comma-separated mc versions labels from meta_lookup.txt
@@ -109,7 +109,7 @@ on:
 # Paths are relative to the repo root after checkout.
 # =============================================================================
 env:
-  LOOKUP_FILE: .github/meta_lookup.txt
+  LOOKUP_FILE: .github/mcmeta_lookup.json
   CONTENT_ROOT: core/content
   META_ROOT: core/meta
   MODS_ROOT: mods
@@ -208,14 +208,18 @@ jobs:
             exit 1
           fi
 
-          # --- Load all mc version labels from the meta_lookup.txt (first column) ---
-          # For each line: strip comments, skip blanks, take CSV field 1, trim spaces.
-          # mapfile puts lines into a bash array ALL_LABELS.
-          mapfile -t ALL_LABELS < <(
-            sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$LOOKUP_FILE" \
-              | cut -d',' -f1 \
-              | sed 's/[[:space:]]*$//'
-          )
+          # --- Load labels from JSON (file key order) -----------------------
+          if ! jq -e 'type == "object"' "$LOOKUP_FILE" >/dev/null; then
+            echo "Error: $LOOKUP_FILE must be a JSON object keyed by label"
+            exit 1
+          fi
+
+          mapfile -t ALL_LABELS < <(jq -r 'keys_unsorted[]' "$LOOKUP_FILE")
+
+          if [ "${#ALL_LABELS[@]}" -eq 0 ]; then
+            echo "Error: $LOOKUP_FILE has no labels"
+            exit 1
+          fi
 
           # Helper: print and return the requested mc version label if it exists in ALL_LABELS, else error.
           resolve_label() {
