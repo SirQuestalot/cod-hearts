@@ -102,8 +102,14 @@ def http_json(url: str, user_agent: str, timeout: int = 60):
 
 def parse_lookup(path: Path) -> dict:
     """
-    Load LOOKUP_FILE JSON into:
-      { key: { "pack_format": int|None, "game_versions": [str, ...] } }
+    Load LOOKUP_FILE JSON and validate shape.
+
+    Returns the dict json.loads produces.
+    Expected root:
+      {
+        "26.3": { "pack_format": 97, "game_versions": ["26.3"] },
+        "1.0-1.5.x": { "pack_format": null, "game_versions": ["1.0", ...] }
+      }
     """
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -113,10 +119,10 @@ def parse_lookup(path: Path) -> dict:
     if not isinstance(data, dict):
         raise SystemExit(f"Lookup root must be a JSON object: {path}")
 
-    rows = {}
     for key, row in data.items():
         if not isinstance(key, str) or not key:
-            raise SystemExit(f"lookup keys must be non-empty strings, got: {key!r}")
+            raise SystemExit(f"Lookup keys must be non-empty strings, got: {key!r}")
+
         if not isinstance(row, dict):
             raise SystemExit(f"lookup entry {key!r} must be an object")
 
@@ -126,6 +132,7 @@ def parse_lookup(path: Path) -> dict:
             )
 
         pack_format = row["pack_format"]
+        # type(...) is not int rejects bool (True/False), which isinstance would allow
         if pack_format is not None and type(pack_format) is not int:
             raise SystemExit(
                 f"lookup entry {key!r}: pack_format must be an integer or null"
@@ -141,12 +148,7 @@ def parse_lookup(path: Path) -> dict:
                 f"lookup entry {key!r}: game_versions must be a list of non-empty strings"
             )
 
-        rows[key] = {
-            "pack_format": pack_format,
-            "game_versions": list(game_versions),
-        }
-
-    return rows
+    return data
 
 
 # =============================================================================
