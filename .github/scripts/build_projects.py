@@ -93,7 +93,7 @@ def http_json(url: str, user_agent: str, timeout: int = 60):
 # =============================================================================
 # mcmeta_lookup.json loading
 # =============================================================================
-# Root object keyed by version key:
+# Expected root object keyed by version key:
 #   {
 #     "26.3": { "pack_format": 97, "game_versions": ["26.3"] },
 #     "1.0-1.5.x": { "pack_format": null, "game_versions": ["1.0", ...] }
@@ -103,13 +103,7 @@ def http_json(url: str, user_agent: str, timeout: int = 60):
 def parse_lookup(path: Path) -> dict:
     """
     Load LOOKUP_FILE JSON and validate shape.
-
     Returns the dict json.loads produces.
-    Expected root:
-      {
-        "26.3": { "pack_format": 97, "game_versions": ["26.3"] },
-        "1.0-1.5.x": { "pack_format": null, "game_versions": ["1.0", ...] }
-      }
     """
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
