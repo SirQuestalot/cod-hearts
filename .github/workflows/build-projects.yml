@@ -521,7 +521,7 @@ jobs:
       # name: project-build  ← publish workflow must use this same name
       # -----------------------------------------------------------------------
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: project-build
           path: build/dist/
