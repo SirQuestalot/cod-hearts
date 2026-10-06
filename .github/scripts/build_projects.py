@@ -61,7 +61,7 @@ def http_json(url: str, user_agent: str):
 #     "26.3": { "pack_format": 97, "game_versions": ["26.3"] },
 #     "1.0-1.5.x": { "pack_format": null, "game_versions": ["1.0", ...] }
 #   }
-# pack_format: int or null (null = pre-pack-format / ancient).
+# pack_format: int or null (null = pre-pack-format, game_versions<1.6).
 
 def parse_lookup(path: Path) -> dict:
     """
@@ -360,7 +360,7 @@ def zip_pack(
     Build one resource-pack zip:
       1. Copy content_dir tree into a temp pack root
       2. Render meta template into pack root under meta_out_name
-      3. Optionally merge mods_root (only when pack_format is set — not ancient)
+      3. Optionally merge mods_root (only when pack_format is numeric, game_versions 1.6+)
       4. Zip the pack root to zip_path (deflated)
     """
     with tempfile.TemporaryDirectory() as tmp:
@@ -385,7 +385,7 @@ def zip_pack(
             license_text,
         )
 
-        # --- optional mod overlay (1.6+ / numeric pack_format only) ----------
+        # --- optional mod overlay (game_versions 1.6+ / numeric pack_format only) ----------
         if include_mods and mods_root.is_dir() and pack_format is not None:
             for item in mods_root.iterdir():
                 dest = root / item.name
