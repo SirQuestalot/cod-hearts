@@ -53,10 +53,10 @@ def http_json(url: str, user_agent: str):
         return json.loads(raw) if raw else None
 
 
-# # =============================================================================
+# =============================================================================
 # mcmeta_lookup.json loading
 # =============================================================================
-# Root object keyed by label:
+# Root object keyed by version key:
 #   {
 #     "26.3": { "pack_format": 97, "game_versions": ["26.3"] },
 #     "1.0-1.5.x": { "pack_format": null, "game_versions": ["1.0", ...] }
@@ -66,7 +66,7 @@ def http_json(url: str, user_agent: str):
 def parse_lookup(path: Path) -> dict:
     """
     Load LOOKUP_FILE JSON into:
-      { label: { "pack_format": int|None, "game_versions": [str, ...] } }
+      { key: { "pack_format": int|None, "game_versions": [str, ...] } }
     """
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -77,34 +77,34 @@ def parse_lookup(path: Path) -> dict:
         raise SystemExit(f"Lookup root must be a JSON object: {path}")
 
     rows = {}
-    for label, row in data.items():
-        if not isinstance(label, str) or not label:
-            raise SystemExit(f"lookup keys must be non-empty strings, got: {label!r}")
+    for key, row in data.items():
+        if not isinstance(key, str) or not key:
+            raise SystemExit(f"lookup keys must be non-empty strings, got: {key!r}")
         if not isinstance(row, dict):
-            raise SystemExit(f"lookup entry {label!r} must be an object")
+            raise SystemExit(f"lookup entry {key!r} must be an object")
 
         if "pack_format" not in row or "game_versions" not in row:
             raise SystemExit(
-                f"lookup entry {label!r} must have pack_format and game_versions"
+                f"lookup entry {key!r} must have pack_format and game_versions"
             )
 
         pack_format = row["pack_format"]
         if pack_format is not None and type(pack_format) is not int:
             raise SystemExit(
-                f"lookup entry {label!r}: pack_format must be an integer or null"
+                f"lookup entry {key!r}: pack_format must be an integer or null"
             )
 
         game_versions = row["game_versions"]
         if not isinstance(game_versions, list) or not game_versions:
             raise SystemExit(
-                f"lookup entry {label!r}: game_versions must be a non-empty list"
+                f"lookup entry {key!r}: game_versions must be a non-empty list"
             )
         if not all(isinstance(v, str) and v for v in game_versions):
             raise SystemExit(
-                f"lookup entry {label!r}: game_versions must be a list of non-empty strings"
+                f"lookup entry {key!r}: game_versions must be a list of non-empty strings"
             )
 
-        rows[label] = {
+        rows[key] = {
             "pack_format": pack_format,
             "game_versions": list(game_versions),
         }
@@ -116,7 +116,7 @@ def parse_lookup(path: Path) -> dict:
 # Minecraft-ish version ordering and content/meta folder selection
 # =============================================================================
 # Folder names under core/content and core/meta are ranges, e.g. "1.20.2-26.3".
-# We place a lookup row by checking that its lowest and highest game versions
+# We place a lookup entry by checking that its lowest and highest game versions
 # both fall inside the same folder range (inclusive).
 
 def version_key(v: str) -> tuple:
@@ -201,7 +201,7 @@ def select_paths(content_root: Path, meta_root: Path, game_versions: list[str]):
     Returns (content_dir, template_path, template_basename).
     """
     if not game_versions:
-        raise SystemExit("Lookup row has empty game_versions list")
+        raise SystemExit("Lookup entry has empty game_versions list")
 
     low = min(game_versions, key=version_key)
     high = max(game_versions, key=version_key)
@@ -226,18 +226,18 @@ def render_meta(
 ) -> None:
     """
     Read template, replace placeholders, write dest/out_name.
-      {{PACK_FORMAT}}  → numeric format or "" if nan/ancient
+      {{PACK_FORMAT}}  → numeric format or "" if null
       {{DESCRIPTION}}  → GitHub About (ASCII-filtered in the workflow)
       {{LICENSE}}      → license string from workflow
     """
-    text = template.read_text()
+    text = template.read_text(encoding="utf-8")
     text = text.replace(
         "{{PACK_FORMAT}}",
         str(pack_format if pack_format is not None else ""),
     )
     text = text.replace("{{DESCRIPTION}}", description)
     text = text.replace("{{LICENSE}}", license_text)
-    (dest / out_name).write_text(text)
+    (dest / out_name).write_text(text, encoding="utf-8")
 
 
 # =============================================================================
@@ -255,7 +255,7 @@ def parse_semver3(s: str):
 def game_overlap(a, b) -> float:
     """
     Jaccard overlap of two game version lists.
-    Used to match an existing Modrinth version to this lookup row's lineage
+    Used to match an existing Modrinth version to this lookup entry's lineage
     (same pack-format major is not enough after merges/splits).
     """
     sa, sb = set(a), set(b)
@@ -266,17 +266,13 @@ def game_overlap(a, b) -> float:
 
 def resolve_version_number(row, project_versions, bump: str, version_override: str):
     """
-    Decide the new version_number string and the previous number (for changelog).
+    Returns (new_version_string, previous_version_string_or_None).
 
-    manual  → version_override as-is (must be X.Y.Z); previous = None for header
-    patch   → bump patch on best matching prior version, or major.0.0 if none
-    feature → bump minor, reset patch
+    patch/feature: prior must have the same pack-format major and 
+    an exact game_versions set match (overlap == 1). 
 
-    Matching priors:
-      - version_number parses as X.Y.Z
-      - X == pack_format (or 0 if pack_format is None / nan)
-      - game_versions overlap with this row > 0
-      - prefer higher overlap, then newer date_published
+    If no such prior exists, exit and tell the user to 
+    use bump=manual (e.g. first release or list changed).
     """
     if bump == "manual":
         if not parse_semver3(version_override):
@@ -286,29 +282,35 @@ def resolve_version_number(row, project_versions, bump: str, version_override: s
         return version_override, None
 
     major = 0 if row["pack_format"] is None else row["pack_format"]
+    row_games = row["game_versions"]
+
     candidates = []
     for ver in project_versions:
         num = ver.get("version_number") or ""
         parsed = parse_semver3(num)
         if not parsed or parsed[0] != major:
             continue
-        overlap = game_overlap(ver.get("game_versions") or [], row["game_versions"])
-        if overlap <= 0:
+        overlap = game_overlap(ver.get("game_versions") or [], row_games)
+        # Exact set match only (Jaccard == 1)
+        if overlap != 1.0:
             continue
         candidates.append(
             (ver.get("date_published") or "", parsed, num, overlap)
         )
 
-    # Best overlap first, then most recently published
     candidates.sort(key=lambda x: (x[3], x[0]), reverse=True)
 
     if not candidates:
-        return f"{major}.0.0", None
+        raise SystemExit(
+            "No Modrinth version found with the same pack_format major and an "
+            "exact game_versions match for this lookup key.\n"
+            "Use bump=manual with version_override (e.g. "
+            f"{major}.0.0) for a first release or after changing game_versions."
+        )
 
     _, (mj, mi, pa), prev_num, _ = candidates[0]
     if bump == "feature":
         return f"{mj}.{mi + 1}.0", prev_num
-    # patch (default)
     return f"{mj}.{mi}.{pa + 1}", prev_num
 
 
@@ -429,18 +431,18 @@ def main() -> None:
     changelog_body = env("CHANGELOG").strip()
     description = os.environ.get("DESCRIPTION", "")
     license_text = os.environ.get("LICENSE", "See LICENSE.txt")
-    # Newline-separated labels from the workflow plan step
-    targets = [l.strip() for l in env("TARGETS").splitlines() if l.strip()]
+    # Newline-separated lookup keys from the workflow plan step
+    targets = [t.strip() for t in env("TARGETS").splitlines() if t.strip()]
     out_dir = Path(os.environ.get("OUT_DIR", "build/dist"))
 
     if not changelog_body:
         raise SystemExit("CHANGELOG is empty")
 
-    # --- load lookup; ensure every requested label exists --------------------
+    # --- load lookup; ensure every requested key exists ----------------------
     lookup = parse_lookup(lookup_file)
     for t in targets:
         if t not in lookup:
-            raise SystemExit(f"Label not in lookup: {t}")
+            raise SystemExit(f"Key not in lookup: {t}")
 
     # --- Modrinth project + existing versions (for auto-bump) ----------------
     ua = f"{project_slug}-build/1.0"
@@ -458,10 +460,10 @@ def main() -> None:
         "entries": [],
     }
 
-    # --- build one zip (+ metadata entry) per target label -------------------
-    for label in targets:
-        row = lookup[label]
-        print(f"\n=== {label} ===")
+    # --- build one zip (+ metadata entry) per target key ---------------------
+    for key in targets:
+        row = lookup[key]
+        print(f"\n=== {key} ===")
 
         content, meta_template, meta_name = select_paths(
             content_root, meta_root, row["game_versions"]
@@ -474,9 +476,8 @@ def main() -> None:
         )
         changelog = build_changelog(ver_num, prev, bump, changelog_body)
 
-        # Safe filename fragment for the label
-        safe_label = label.replace("/", "-")
-        file_name = f"{project_slug}-{safe_label}-{ver_num}.zip"
+        safe_key = key.replace("/", "-")
+        file_name = f"{project_slug}-{safe_key}-{ver_num}.zip"
         zip_path = out_dir / file_name
 
         use_mods = include_mods and row["pack_format"] is not None
@@ -494,10 +495,10 @@ def main() -> None:
 
         metadata["entries"].append(
             {
-                "label": label,
+                "key": key,
                 "version_number": ver_num,
                 "previous_version": prev,
-                "name": f"{title} {label}",
+                "name": f"{title} {key}",
                 "game_versions": row["game_versions"],
                 "changelog": changelog,
                 "file": file_name,
@@ -507,7 +508,9 @@ def main() -> None:
         print(changelog)
 
     # --- write metadata.json for the publish workflow -----------------------------
-    (out_dir / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
+    (out_dir / "metadata.json").write_text(
+        json.dumps(metadata, indent=2) + "\n", encoding="utf-8"
+    )
     print("\nWrote metadata.json")
 
 
