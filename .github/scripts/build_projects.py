@@ -17,6 +17,7 @@ import os
 import re
 import shutil
 import tempfile
+import urllib.error
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -37,20 +38,56 @@ def env(name: str, default: str | None = None) -> str:
     return value
 
 
-def http_json(url: str, user_agent: str):
+def http_json(url: str, user_agent: str, timeout: int = 60):
     """
-    GET a JSON URL (Modrinth API). Returns parsed object, or None if empty body.
+    GET a JSON URL (used for Modrinth API) and return the parsed value.
+
+    Returns:
+      - dict/list/etc. from json.loads when the body is non-empty
+      - None when the body is empty
+
+    Aborts the build (SystemExit) on network/HTTP/JSON failures so CI logs
+    show a clear reason instead of a raw Python traceback only.
     """
+    # Build the HTTP request. Request is just the "what to fetch" object;
+    # nothing is sent until urlopen runs.
     req = urllib.request.Request(
         url,
         headers={
+            # Modrinth asks for a descriptive User-Agent (project + contact/role).
             "User-Agent": user_agent,
+            # Prefer JSON responses from the API.
             "Accept": "application/json",
         },
     )
-    with urllib.request.urlopen(req) as resp:
-        raw = resp.read()
-        return json.loads(raw) if raw else None
+
+    try:
+        # timeout: seconds to wait for connect + read; avoids a hung workflow job.
+        # urlopen returns a file-like response; `with` closes it when done.
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            # Raw response body as bytes (not yet decoded text / JSON).
+            raw = resp.read()
+
+    # Server responded with an error status (404, 401, 5xx, …).
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")
+        raise SystemExit(
+            f"HTTP {e.code} fetching {url}\n{body}"
+        ) from e
+
+    # DNS failure, connection refused, network down, etc.
+    except urllib.error.URLError as e:
+        raise SystemExit(f"Failed to fetch {url}: {e.reason}") from e
+
+    # Empty body is allowed (caller may treat None like "no data").
+    if not raw:
+        return None
+
+    # Parse JSON text into Python dict/list/… .
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise SystemExit(f"Invalid JSON from {url}: {e}") from e
 
 
 # =============================================================================
