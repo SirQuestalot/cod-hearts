@@ -50,7 +50,7 @@ on:
 
       # Must match a top-level key in mcmeta_lookup.json
       # Example: 26.3 or 1.21.9-1.21.10
-      mc_version_label_single:
+      mc_version_key_single:
         description: (for mode=single) One key from mcmeta_lookup.json
         type: string
         required: false
@@ -59,10 +59,10 @@ on:
 
       # Exactly two comma-separated keys from mcmeta_lookup.json
       # (order does not matter).
-      # Builds every label between them in file key order, inclusive.
+      # Builds every key between them in file key order, inclusive.
       # Example: 1.6.x-1.8.x, 26.3
-      mc_version_label_range:
-        description: (for mode=range) Comma-separated mc versions labels from meta_lookup.txt
+      mc_version_key_range:
+        description: (for mode=range) Comma-separated mc versions keys from mcmeta_lookup.json
         type: string
         required: false
         # required-ness is enforced in a step below
@@ -135,7 +135,7 @@ jobs:
       # STEP: Checkout
       # -----------------------------------------------------------------------
       # actions/checkout clones this repo into the workspace so later steps
-      # can read meta_lookup.txt, core/, mods/, and the Python script.
+      # can read mcmeta_lookup.json, core/, mods/, and the Python script.
       # Without this, the runner has no project files.
       # -----------------------------------------------------------------------
       - name: Checkout repository
@@ -356,7 +356,7 @@ jobs:
               LENGTH=$((END_I - START_I + 1))
 
               # Bash array slice: from index START_I, take LENGTH elements
-              # Example: ALL_KEYS indices 0..N, START_I=2, END_I=5 → labels at 2,3,4,5
+              # Example: ALL_KEYS indices 0..N, START_I=2, END_I=5 → keys at 2,3,4,5
               TARGETS=("${ALL_KEYS[@]:$START_I:$LENGTH}")
               ;;
 
