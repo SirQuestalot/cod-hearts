@@ -208,30 +208,68 @@ jobs:
             exit 1
           fi
 
-          # --- Load labels from JSON (file key order) -----------------------
+          # =============================================================================
+          # Load labels from mcmeta_lookup.json (preserve file key order)
+          # -----------------------------------------------------------------------------
+          # ALL_LABELS becomes a bash array of every top-level key in the JSON, in the
+          # same order they appear in the file (e.g. 26.3, 26.2, …, 1.0-1.5.x).
+          # That order is what mode=range uses for “everything between A and B”.
+          # =============================================================================
+
+          # jq -e: run the filter; exit status is failure if the result is false/null.
+          # 'type == "object"': true only if the root JSON value is { ... }, not [ ... ]
+          # or a bare string/number.
+          # >/dev/null: we only care about success/failure, not the printed "true".
+          # if ! …: enter the error branch when the check fails.
           if ! jq -e 'type == "object"' "$LOOKUP_FILE" >/dev/null; then
             echo "Error: $LOOKUP_FILE must be a JSON object keyed by label"
             exit 1
           fi
 
+          # mapfile -t ALL_LABELS: read lines into array ALL_LABELS (-t strips newlines).
+          # < <(...): process substitution — run the command in (...) and feed its
+          # stdout to mapfile as if it were a file.
+          #
+          # jq -r 'keys_unsorted[]':
+          #   keys_unsorted  → list of object keys in file order (not alphabetical;
+          #                    plain "keys" would sort them).
+          #   []             → output one key per line
+          #   -r             → raw strings (no JSON quotes around each key)
           mapfile -t ALL_LABELS < <(jq -r 'keys_unsorted[]' "$LOOKUP_FILE")
 
+          # ${#ALL_LABELS[@]} = number of elements in the array
           if [ "${#ALL_LABELS[@]}" -eq 0 ]; then
             echo "Error: $LOOKUP_FILE has no labels"
             exit 1
           fi
 
-          # Helper: print and return the requested mc version label if it exists in ALL_LABELS, else error.
+          # -----------------------------------------------------------------------------
+          # resolve_label WANT
+          # -----------------------------------------------------------------------------
+          # If WANT is in ALL_LABELS, print it and return 0 (success).
+          # Otherwise print an error to stderr and return 1 (failure).
+          # Used so mode=single / range endpoints must be real lookup keys.
+          # -----------------------------------------------------------------------------
           resolve_label() {
+            # local: variables only exist inside this function
+            # $1 = first argument passed to the function
             local want="$1" label
             for label in "${ALL_LABELS[@]}"; do
+              # { echo ...; return 0; } runs both commands if the match succeeds
               [ "$label" = "$want" ] && { echo "$label"; return 0; }
             done
+            # >&2 = send this message to stderr (not mixed with the normal "print label" stdout)
             echo "Error: label '$want' not found in $LOOKUP_FILE" >&2
             return 1
           }
 
-          # Helper: index of a label in ALL_LABELS (0-based), or fail
+          # -----------------------------------------------------------------------------
+          # index_of_label WANT
+          # -----------------------------------------------------------------------------
+          # Print the 0-based index of WANT inside ALL_LABELS (0 = first key in the file).
+          # Used by mode=range to know where the slice starts and ends.
+          # "${!ALL_LABELS[@]}" expands to all indices: 0 1 2 … 
+          # -----------------------------------------------------------------------------
           index_of_label() {
             local want="$1" i
             for i in "${!ALL_LABELS[@]}"; do
