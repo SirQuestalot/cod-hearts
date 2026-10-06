@@ -2,7 +2,7 @@
 # Shown in the GitHub Actions tab. Also the string other workflows would use
 # if they watched with workflow_run (e.g. workflows: ["Build Projects"]).
 # -----------------------------------------------------------------------------
-# Manual workflow: pick mcmeta_lookup.json rows, build resource-pack zips,
+# Manual workflow: pick mcmeta_lookup.json keys, build resource-pack zips,
 # write metadata.json, upload everything as a GitHub Actions artifact.
 # -----------------------------------------------------------------------------
 # Does NOT publish to Modrinth (that is a separate workflow that downloads
@@ -20,8 +20,8 @@ name: Build Projects
 #   Build: all | all | feature
 run-name: >-
   Build: ${{ inputs.mode }} | ${{
-    inputs.mode == 'single' && inputs.mc_version_label_single
-    || inputs.mode == 'range' && inputs.mc_version_label_range
+    inputs.mode == 'single' && inputs.mc_version_key_single
+    || inputs.mode == 'range' && inputs.mc_version_key_range
     || 'all'
   }} | ${{
     inputs.bump == 'manual' && format('manual ({0})', inputs.version_override)
@@ -40,8 +40,8 @@ on:
     # -------------------------------------------------------------------------
     inputs:
 
-      # How many mcmeta_lookup.json rows to build this run
-      # single = one label | range = several | all = every version in the file
+      # How many mcmeta_lookup.json keys to build this run
+      # single = one key | range = several | all = every key in the file
       mode:
         description: Which mc versions to build
         type: choice
@@ -51,7 +51,7 @@ on:
       # Must match a top-level key in mcmeta_lookup.json
       # Example: 26.3 or 1.21.9-1.21.10
       mc_version_label_single:
-        description: (for mode=single) One mc version label from mcmeta_lookup.json
+        description: (for mode=single) One key from mcmeta_lookup.json
         type: string
         required: false
         # required-ness is enforced in a step below
@@ -142,24 +142,24 @@ jobs:
         uses: actions/checkout@v5
 
       # -----------------------------------------------------------------------
-      # STEP: Validate inputs and resolve labels
+      # STEP: Validate inputs and resolve which lookup keys this run will build.
       # -----------------------------------------------------------------------
-      # Validate the form inputs and compute the list of mc version labels to build.
+      # Validate the form inputs and compute the list of mc version keys to build.
       #
       # This step is pure bash. It does NOT build zips. It only:
-      #   1) Enforces input combinations (single needs an mc version label, range needs two, etc.)
-      #   2) Reads every mc version label from meta_lookup.txt
-      #   3) Builds the list TARGETS of mc version labels this run will process
+      #   1) Enforces input combinations (single needs an mc version key, range needs two, etc.)
+      #   2) Reads every mc version key from mcmeta_lookup.json
+      #   3) Builds the list TARGETS of mc version keys this run will process
       #   4) Writes that list to GITHUB_OUTPUT as a multiline "targets" value
-      #       - steps.plan.outputs.targets (newline-separated labels for the script)
+      #       - steps.plan.outputs.targets (newline-separated keys for the script)
       # -----------------------------------------------------------------------
-      - name: Validate inputs and resolve labels
+      - name: Validate inputs and resolve keys
         id: plan
         env:
           # Copy inputs into env vars for simpler shell quoting
           MODE: ${{ inputs.mode }}
-          MC_VERSION_LABEL_SINGLE: ${{ inputs.mc_version_label_single }}
-          MC_VERSION_LABEL_RANGE: ${{ inputs.mc_version_label_range }}
+          MC_VERSION_KEY_SINGLE: ${{ inputs.mc_version_key_single }}
+          MC_VERSION_KEY_RANGE: ${{ inputs.mc_version_key_range }}
           BUMP: ${{ inputs.bump }}
           VERSION_OVERRIDE: ${{ inputs.version_override }}
           CHANGELOG: ${{ inputs.changelog }}
@@ -171,13 +171,13 @@ jobs:
 
           # --- Enforce input combinations ------------------------------------
 
-          if [ "$MODE" = "single" ] && [ -z "${MC_VERSION_LABEL_SINGLE// }" ]; then
-            echo "Error: mc_version_label_single is required when mode=single"
+          if [ "$MODE" = "single" ] && [ -z "${MC_VERSION_KEY_SINGLE// }" ]; then
+            echo "Error: mc_version_key_single is required when mode=single"
             exit 1
           fi
 
-          if [ "$MODE" = "range" ] && [ -z "${MC_VERSION_LABEL_RANGE// }" ]; then
-            echo "Error: mc_version_label_range is required when mode=range"
+          if [ "$MODE" = "range" ] && [ -z "${MC_VERSION_KEY_RANGE// }" ]; then
+            echo "Error: mc_version_key_range is required when mode=range"
             exit 1
           fi
 
@@ -209,11 +209,11 @@ jobs:
           fi
 
           # =============================================================================
-          # Load labels from mcmeta_lookup.json (preserve file key order)
+          # Load keys from mcmeta_lookup.json (preserve file key order)
           # -----------------------------------------------------------------------------
-          # ALL_LABELS becomes a bash array of every top-level key in the JSON, in the
-          # same order they appear in the file (e.g. 26.3, 26.2, …, 1.0-1.5.x).
-          # That order is what mode=range uses for “everything between A and B”.
+          # ALL_KEYS = every top-level JSON key, in file order
+          # (e.g. 26.3, 26.2, …, 1.0-1.5.x).
+          # mode=range uses that order for “everything between A and B”.
           # =============================================================================
 
           # jq -e: run the filter; exit status is failure if the result is false/null.
@@ -222,11 +222,11 @@ jobs:
           # >/dev/null: we only care about success/failure, not the printed "true".
           # if ! …: enter the error branch when the check fails.
           if ! jq -e 'type == "object"' "$LOOKUP_FILE" >/dev/null; then
-            echo "Error: $LOOKUP_FILE must be a JSON object keyed by label"
+            echo "Error: $LOOKUP_FILE must be a JSON object keyed by version key"
             exit 1
           fi
 
-          # mapfile -t ALL_LABELS: read lines into array ALL_LABELS (-t strips newlines).
+          # mapfile -t ALL_KEYS: read lines into array ALL_KEYS (-t strips newlines).
           # < <(...): process substitution — run the command in (...) and feed its
           # stdout to mapfile as if it were a file.
           #
@@ -235,57 +235,57 @@ jobs:
           #                    plain "keys" would sort them).
           #   []             → output one key per line
           #   -r             → raw strings (no JSON quotes around each key)
-          mapfile -t ALL_LABELS < <(jq -r 'keys_unsorted[]' "$LOOKUP_FILE")
+          mapfile -t ALL_KEYS < <(jq -r 'keys_unsorted[]' "$LOOKUP_FILE")
 
-          # ${#ALL_LABELS[@]} = number of elements in the array
-          if [ "${#ALL_LABELS[@]}" -eq 0 ]; then
-            echo "Error: $LOOKUP_FILE has no labels"
+          # ${#ALL_KEYS[@]} = number of elements in the array
+          if [ "${#ALL_KEYS[@]}" -eq 0 ]; then
+            echo "Error: $LOOKUP_FILE has no keys"
             exit 1
           fi
 
           # -----------------------------------------------------------------------------
-          # resolve_label WANT
+          # resolve_key WANT
           # -----------------------------------------------------------------------------
-          # If WANT is in ALL_LABELS, print it and return 0 (success).
+          # If WANT is in ALL_KEYS, print it and return 0 (success).
           # Otherwise print an error to stderr and return 1 (failure).
           # Used so mode=single / range endpoints must be real lookup keys.
           # -----------------------------------------------------------------------------
-          resolve_label() {
+          resolve_key() {
             # local: variables only exist inside this function
             # $1 = first argument passed to the function
-            local want="$1" label
-            for label in "${ALL_LABELS[@]}"; do
+            local want="$1" key
+            for key in "${ALL_KEYS[@]}"; do
               # { echo ...; return 0; } runs both commands if the match succeeds
-              [ "$label" = "$want" ] && { echo "$label"; return 0; }
+              [ "$key" = "$want" ] && { echo "$key"; return 0; }
             done
-            # >&2 = send this message to stderr (not mixed with the normal "print label" stdout)
-            echo "Error: label '$want' not found in $LOOKUP_FILE" >&2
+            # >&2 = send this message to stderr (not mixed with the normal "print key" stdout)
+            echo "Error: key '$want' not found in $LOOKUP_FILE" >&2
             return 1
           }
 
           # -----------------------------------------------------------------------------
-          # index_of_label WANT
+          # index_of_key WANT
           # -----------------------------------------------------------------------------
-          # Print the 0-based index of WANT inside ALL_LABELS (0 = first key in the file).
+          # Print the 0-based index of WANT inside ALL_KEYS (0 = first key in the file).
           # Used by mode=range to know where the slice starts and ends.
-          # "${!ALL_LABELS[@]}" expands to all indices: 0 1 2 … 
+          # "${!ALL_KEYS[@]}" expands to all indices: 0 1 2 … 
           # -----------------------------------------------------------------------------
-          index_of_label() {
+          index_of_key() {
             local want="$1" i
-            for i in "${!ALL_LABELS[@]}"; do
-              if [ "${ALL_LABELS[$i]}" = "$want" ]; then
+            for i in "${!ALL_KEYS[@]}"; do
+              if [ "${ALL_KEYS[$i]}" = "$want" ]; then
                 echo "$i"
                 return 0
               fi
             done
-            echo "Error: label '$want' not found in $LOOKUP_FILE" >&2
+            echo "Error: key '$want' not found in $LOOKUP_FILE" >&2
             return 1
           }
 
           # =============================================================================
           # Build TARGETS from mode
           # -----------------------------------------------------------------------------
-          # TARGETS = ordered list of meta_lookup labels this workflow run will build.
+          # TARGETS = ordered list of mcmeta_lookup.json keys this workflow run will build.
           # Starts empty; the case below fills it from MODE + the relevant inputs.
           # =============================================================================
           TARGETS=()
@@ -295,13 +295,13 @@ jobs:
             # ---------------------------------------------------------------------------
             # mode=single
             # ---------------------------------------------------------------------------
-            # User supplied one label (e.g. "26.3").
+            # User supplied one key (e.g. "26.3").
             # 1) Trim whitespace from the input with xargs.
-            # 2) resolve_label: confirm it exists in ALL_LABELS (else error).
-            # 3) Append that one label to TARGETS.
+            # 2) resolve_key: confirm it exists in ALL_KEYS (else error).
+            # 3) Append that one key to TARGETS.
             # ---------------------------------------------------------------------------
             single)
-              TARGETS+=("$(resolve_label "$(echo "$MC_VERSION_LABEL_SINGLE" | xargs)")")
+              TARGETS+=("$(resolve_key "$(echo "$MC_VERSION_KEY_SINGLE" | xargs)")")
               ;;
 
             # ---------------------------------------------------------------------------
@@ -309,7 +309,7 @@ jobs:
             # ---------------------------------------------------------------------------
             # User supplied two endpoints in one string, comma-separated, e.g.
             #   "1.6.x-1.8.x, 26.3"
-            # We take every label in ALL_LABELS from one endpoint through the other
+            # We take every key in ALL_KEYS from one endpoint through the other
             # (inclusive), using **file order**, not Minecraft version sorting.
             # Endpoint order in the input does not matter.
             # ---------------------------------------------------------------------------
@@ -318,8 +318,8 @@ jobs:
               ENDPOINTS=()
               # IFS=',' → split on commas only for this read
               # -ra RAW → read into array RAW
-              # <<< "$MC_VERSION_LABEL_RANGE" → use that string as input
-              IFS=',' read -ra RAW <<< "$MC_VERSION_LABEL_RANGE"
+              # <<< "$MC_VERSION_KEY_RANGE" → use that string as input
+              IFS=',' read -ra RAW <<< "$MC_VERSION_KEY_RANGE"
 
               for item in "${RAW[@]}"; do
                 # Trim spaces around each piece (" 26.3" → "26.3")
@@ -331,18 +331,18 @@ jobs:
 
               # Must be exactly two endpoints — not 0, 1, or 3+
               if [ "${#ENDPOINTS[@]}" -ne 2 ]; then
-                echo "Error: mode=range requires exactly two comma-separated labels (start, end)"
-                echo "Got ${#ENDPOINTS[@]} endpoint(s) from: $MC_VERSION_LABEL_RANGE"
+                echo "Error: mode=range requires exactly two comma-separated keys (start, end)"
+                echo "Got ${#ENDPOINTS[@]} endpoint(s) from: $MC_VERSION_KEY_RANGE"
                 exit 1
               fi
 
-              # Confirm both labels exist in the lookup file (errors if not)
-              START_LABEL="$(resolve_label "${ENDPOINTS[0]}")"
-              END_LABEL="$(resolve_label "${ENDPOINTS[1]}")"
+              # Confirm both keys exist in the lookup file (errors if not)
+              START_KEY="$(resolve_key "${ENDPOINTS[0]}")"
+              END_KEY="$(resolve_key "${ENDPOINTS[1]}")"
 
-              # Numeric positions of those labels inside ALL_LABELS (0-based)
-              START_I="$(index_of_label "$START_LABEL")"
-              END_I="$(index_of_label "$END_LABEL")"
+              # Numeric positions of those keys inside ALL_KEYS (0-based)
+              START_I="$(index_of_key "$START_KEY")"
+              END_I="$(index_of_key "$END_KEY")"
 
               # Normalize so START_I is the earlier index in the file and END_I the later.
               # That way "26.3, 1.6.x-1.8.x" and "1.6.x-1.8.x, 26.3" select the same slice.
@@ -352,21 +352,21 @@ jobs:
                 END_I="$TMP"
               fi
 
-              # How many labels are in the inclusive span [START_I, END_I]
+              # How many keys are in the inclusive span [START_I, END_I]
               LENGTH=$((END_I - START_I + 1))
 
               # Bash array slice: from index START_I, take LENGTH elements
-              # Example: ALL_LABELS indices 0..N, START_I=2, END_I=5 → labels at 2,3,4,5
-              TARGETS=("${ALL_LABELS[@]:$START_I:$LENGTH}")
+              # Example: ALL_KEYS indices 0..N, START_I=2, END_I=5 → labels at 2,3,4,5
+              TARGETS=("${ALL_KEYS[@]:$START_I:$LENGTH}")
               ;;
 
             # ---------------------------------------------------------------------------
             # mode=all
             # ---------------------------------------------------------------------------
-            # No extra input. Build every label in the lookup file, same order as the file.
+            # No extra input. Build every key in the lookup file, same order as the file.
             # ---------------------------------------------------------------------------
             all)
-              TARGETS=("${ALL_LABELS[@]}")
+              TARGETS=("${ALL_KEYS[@]}")
               ;;
 
             # ---------------------------------------------------------------------------
