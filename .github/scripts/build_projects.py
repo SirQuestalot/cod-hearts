@@ -515,8 +515,8 @@ def main() -> None:
         content, meta_template, meta_name = select_paths(
             content_root, meta_root, row["game_versions"]
         )
-        print(f"Content: {content}")
-        print(f"Meta:    {meta_template}")
+        # print(f"Content: {content}")
+        # print(f"Meta:    {meta_template}")
 
         ver_num, prev = resolve_version_number(
             row, project_versions, bump, version_override
@@ -552,9 +552,9 @@ def main() -> None:
                 "game_versions": row["game_versions"],
             }
         )
-        print(f"{zip_path}")
-        print(f"Changelog:\n{changelog}")
-        print("=============")
+        # print(f"{zip_path}")
+        # print(f"Changelog:\n{changelog}")
+        # print("=============")
 
     # --- write metadata.json for the publish workflow -----------------------------
     (out_dir / "metadata.json").write_text(
