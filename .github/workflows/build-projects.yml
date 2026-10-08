@@ -120,6 +120,8 @@ env:
   MODRINTH_API: https://api.modrinth.com/v2
   GITHUB_API: https://api.github.com
   OUT_DIR: build/dist
+  PACK_ICON: pack.png
+  LICENSE_FILE: LICENSE.txt
   # where zips + metadata.json are written on the VM.
   # upload-artifact packs this folder for the workflow run.
 
