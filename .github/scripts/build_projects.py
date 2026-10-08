@@ -533,7 +533,7 @@ def main() -> None:
                 "game_versions": row["game_versions"],
                 "version_number": ver_num,
                 "previous_version": prev,
-                "changelog": "changelog",
+                "changelog": changelog,
                 "file": file_name,
             }
         )
