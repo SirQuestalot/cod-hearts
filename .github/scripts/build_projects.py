@@ -5,7 +5,7 @@ Build resource-pack zips + metadata.json from mcmeta_lookup.json and core/ trees
 Invoked by .github/workflows/build-projects.yml with configuration via env vars:
   LOOKUP_FILE, CONTENT_ROOT, META_ROOT, MODS_ROOT, MODRINTH_API,
   PROJECT_SLUG, BUMP, VERSION_OVERRIDE, INCLUDE_MODS, CHANGELOG,
-  DESCRIPTION, LICENSE, TARGETS, OUT_DIR
+  DESCRIPTION, LICENSE, TARGETS, OUT_DIR, PACK_ICON, LICENSE_FILE
 
 Does not publish to Modrinth — only writes zips + metadata.json under OUT_DIR.
 """
@@ -301,10 +301,10 @@ def resolve_version_number(row, project_versions, bump: str, version_override: s
     """
     Returns (new_version_string, previous_version_string_or_None).
 
-    patch/feature: prior must have the same pack-format major and 
-    an exact game_versions set match (overlap == 1). 
+    patch/feature: prior must have the same pack-format major and
+    an exact game_versions set match (overlap == 1).
 
-    If no such prior exists, exit and tell the user to 
+    If no such prior exists, exit and tell the user to
     use bump=manual (e.g. first release or list changed).
     """
     if bump == "manual":
@@ -388,13 +388,17 @@ def zip_pack(
     description: str,
     license_text: str,
     zip_path: Path,
+    pack_icon: Path,
+    license_file: Path,
 ) -> None:
     """
     Build one resource-pack zip:
       1. Copy content_dir tree into a temp pack root
       2. Render meta template into pack root under meta_out_name
-      3. Optionally merge mods_root (only when pack_format is numeric, game_versions 1.6+)
-      4. Zip the pack root to zip_path (deflated)
+      3. Copy pack icon + license file to pack root (required)
+      4. Optionally merge each mods/<name>/assets/ into pack assets/
+         (only when pack_format is numeric)
+      5. Zip the pack root to zip_path
     """
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp) / "pack"
@@ -408,7 +412,7 @@ def zip_pack(
             else:
                 shutil.copy2(item, dest)
 
-        # --- pack metadata ---------------------------------------------------
+        # --- pack.mcmeta / pack.txt ------------------------------------------
         render_meta(
             meta_template,
             meta_out_name,
@@ -418,25 +422,27 @@ def zip_pack(
             license_text,
         )
 
-        # --- optional mod overlay (game_versions 1.6+ / numeric pack_format only) ----------
+        # --- pack icon + license at zip root ---------------------------------
+        shutil.copy2(pack_icon, root / pack_icon.name)
+        shutil.copy2(license_file, root / license_file.name)
+
+        # --- mod overlays: mods/<mod>/assets → pack/assets -------------------
         if include_mods and mods_root.is_dir() and pack_format is not None:
-            for item in mods_root.iterdir():
-                dest = root / item.name
-                if item.is_dir():
-                    if dest.exists():
-                        # Merge into existing namespace (e.g. assets/)
-                        for sub in item.rglob("*"):
-                            rel = sub.relative_to(item)
-                            target = dest / rel
-                            if sub.is_dir():
-                                target.mkdir(parents=True, exist_ok=True)
-                            else:
-                                target.parent.mkdir(parents=True, exist_ok=True)
-                                shutil.copy2(sub, target)
+            for mod_dir in sorted(p for p in mods_root.iterdir() if p.is_dir()):
+                assets_src = mod_dir / "assets"
+                if not assets_src.is_dir():
+                    print(f"Skipping mod without assets/: {mod_dir.name}")
+                    continue
+                assets_dest = root / "assets"
+                assets_dest.mkdir(exist_ok=True)
+                for sub in assets_src.rglob("*"):
+                    rel = sub.relative_to(assets_src)
+                    target = assets_dest / rel
+                    if sub.is_dir():
+                        target.mkdir(parents=True, exist_ok=True)
                     else:
-                        shutil.copytree(item, dest)
-                else:
-                    shutil.copy2(item, dest)
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(sub, target)
 
         # --- write zip -------------------------------------------------------
         with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -467,6 +473,14 @@ def main() -> None:
     # Newline-separated lookup keys from the workflow plan step
     targets = [t.strip() for t in env("TARGETS").splitlines() if t.strip()]
     out_dir = Path(os.environ.get("OUT_DIR", "build/dist"))
+
+    # Required pack icon + license file (paths from workflow env)
+    pack_icon = Path(env("PACK_ICON"))
+    license_file = Path(env("LICENSE_FILE"))
+    if not pack_icon.is_file():
+        raise SystemExit(f"PACK_ICON not found: {pack_icon}")
+    if not license_file.is_file():
+        raise SystemExit(f"LICENSE_FILE not found: {license_file}")
 
     if not changelog_body:
         raise SystemExit("CHANGELOG is empty")
@@ -509,8 +523,7 @@ def main() -> None:
         )
         changelog = build_changelog(ver_num, prev, bump, changelog_body)
 
-        zip_name = ''.join(word.capitalize() for word in project_slug.split('-'))
-        safe_key = key.replace("/", "-")
+        zip_name = "".join(word.capitalize() for word in project_slug.split("-"))
         file_name = f"{zip_name}-[v{ver_num}].zip"
         zip_path = out_dir / file_name
 
@@ -525,6 +538,8 @@ def main() -> None:
             description,
             license_text,
             zip_path,
+            pack_icon,
+            license_file,
         )
 
         metadata["entries"].append(
@@ -535,7 +550,6 @@ def main() -> None:
                 "changelog": changelog,
                 "file": file_name,
                 "game_versions": row["game_versions"],
-
             }
         )
         print(f"Built {zip_path}")
