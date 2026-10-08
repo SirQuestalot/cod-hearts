@@ -90,7 +90,7 @@ on:
 
       # If true, merge the mods/ tree into packs that have a numeric pack_format
       include_mods:
-        description: Include mods/ assets (1.6+ only)
+        description: Include mod assets (1.6+ only)
         type: boolean
         default: true
 
