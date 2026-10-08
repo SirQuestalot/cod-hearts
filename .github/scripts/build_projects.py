@@ -512,7 +512,6 @@ def main() -> None:
     # --- build one zip (+ metadata entry) per target key ---------------------
     for key in targets:
         row = lookup[key]
-        print(f"\n=== {key} ===")
 
         content, meta_template, meta_name = select_paths(
             content_root, meta_root, row["game_versions"]
