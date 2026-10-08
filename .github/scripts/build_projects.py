@@ -297,7 +297,7 @@ def game_overlap(a, b) -> float:
     return len(sa & sb) / len(sa | sb)
 
 
-def resolve_version_number(row, project_versions, bump: str, version_override: str):
+def resolve_version_number(key: str, row, project_versions, bump: str, version_override: str):
     """
     Returns (new_version_string, previous_version_string_or_None).
 
@@ -335,6 +335,8 @@ def resolve_version_number(row, project_versions, bump: str, version_override: s
 
     if not candidates:
         raise SystemExit(
+            ""
+            f"=== {key!r} ==="
             "No Modrinth version found with the same pack_format major and an "
             "exact game_versions match for this lookup key.\n"
             "Use bump=manual with version_override (e.g. "
@@ -519,7 +521,7 @@ def main() -> None:
         # print(f"Meta:    {meta_template}")
 
         ver_num, prev = resolve_version_number(
-            row, project_versions, bump, version_override
+            key, row, project_versions, bump, version_override
         )
         changelog = build_changelog(ver_num, prev, bump, changelog_body)
 
