@@ -553,7 +553,8 @@ def main() -> None:
             }
         )
         print(f"{zip_path}")
-        print(f"Changelog: {changelog.replace('\n', '\\n')}")
+        print(f"Changelog:\n{changelog}")
+        print("=============")
 
     # --- write metadata.json for the publish workflow -----------------------------
     (out_dir / "metadata.json").write_text(
