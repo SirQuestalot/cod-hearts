@@ -62,7 +62,7 @@ on:
       # Builds every key between them in file key order, inclusive.
       # Example: 1.6.x-1.8.x, 26.3
       mc_version_key_range:
-        description: (for mode=range) Comma-separated mc versions keys from mcmeta_lookup.json
+        description: (for mode=range) Comma-separated keys from mcmeta_lookup.json
         type: string
         required: false
         # required-ness is enforced in a step below
