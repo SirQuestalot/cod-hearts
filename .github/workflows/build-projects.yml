@@ -142,7 +142,7 @@ jobs:
       # Without this, the runner has no project files.
       # -----------------------------------------------------------------------
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       # -----------------------------------------------------------------------
       # STEP: Validate inputs and resolve which lookup keys this run will build.
@@ -524,7 +524,7 @@ jobs:
       # name: project-build  ← publish workflow must use this same name
       # -----------------------------------------------------------------------
       - name: Upload artifacts
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: project-build
           path: build/dist/
