@@ -509,8 +509,9 @@ def main() -> None:
         )
         changelog = build_changelog(ver_num, prev, bump, changelog_body)
 
+        zip_name = ''.join(word.capitalize() for word in project_slug.split('-'))
         safe_key = key.replace("/", "-")
-        file_name = f"{project_slug}-{safe_key}-{ver_num}.zip"
+        file_name = f"{zip_name}-[v{ver_num}].zip"
         zip_path = out_dir / file_name
 
         use_mods = include_mods and row["pack_format"] is not None
@@ -531,9 +532,8 @@ def main() -> None:
                 "key": key,
                 "version_number": ver_num,
                 "previous_version": prev,
-                "name": f"{title} {key}",
                 "game_versions": row["game_versions"],
-                "changelog": changelog,
+                "changelog": row["changelog"],
                 "file": file_name,
             }
         )
