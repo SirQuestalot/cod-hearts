@@ -467,7 +467,7 @@ def main() -> None:
     bump = env("BUMP")
     version_override = os.environ.get("VERSION_OVERRIDE", "").strip()
     include_mods = os.environ.get("INCLUDE_MODS", "true").lower() == "true"
-    changelog_body = env("CHANGELOG").strip()
+    changelog_body = env("CHANGELOG").strip().replace("\\n", "\n")    
     description = os.environ.get("DESCRIPTION", "")
     license_text = os.environ.get("LICENSE", "See LICENSE.txt")
     # Newline-separated lookup keys from the workflow plan step
@@ -552,8 +552,8 @@ def main() -> None:
                 "game_versions": row["game_versions"],
             }
         )
-        print(f"Built {zip_path}")
-        print(changelog)
+        print(f"{zip_path}")
+        print(f"Changelog: {changelog.replace('\n', '\\n')}")
 
     # --- write metadata.json for the publish workflow -----------------------------
     (out_dir / "metadata.json").write_text(
