@@ -530,11 +530,12 @@ def main() -> None:
         metadata["entries"].append(
             {
                 "key": key,
-                "game_versions": row["game_versions"],
                 "version_number": ver_num,
                 "previous_version": prev,
                 "changelog": changelog,
                 "file": file_name,
+                "game_versions": row["game_versions"],
+
             }
         )
         print(f"Built {zip_path}")
