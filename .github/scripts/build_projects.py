@@ -336,8 +336,8 @@ def resolve_version_number(key: str, row, project_versions, bump: str, version_o
     if not candidates:
         raise SystemExit(
             ""
-            f"=== {key!r} ==="
-            "No Modrinth version found with the same pack_format major and an "
+            f"{key!r}\n"
+            "No Modrinth version found with the same pack_format and an "
             "exact game_versions match for this lookup key.\n"
             "Use bump=manual with version_override (e.g. "
             f"{major}.0.0) for a first release or after changing game_versions."
