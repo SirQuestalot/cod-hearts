@@ -530,7 +530,7 @@ def main() -> None:
         metadata["entries"].append(
             {
                 "key": key,
-                "game_versions": row[game_versions],
+                "game_versions": row["game_versions"],
                 "version_number": ver_num,
                 "previous_version": prev,
                 "changelog": "changelog",
