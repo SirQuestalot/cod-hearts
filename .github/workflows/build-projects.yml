@@ -51,9 +51,10 @@ on:
       # Must match a top-level key in mcmeta_lookup.json
       # Example: 26.3 or 1.21.9-1.21.10
       mc_version_key_single:
-        description: (for mode=single) One key from mcmeta_lookup.json
+        description: One key from mcmeta_lookup.json
         type: string
         required: false
+        default: (for mode=single)
         # required-ness is enforced in a step below
         # Required when mode=single
 
@@ -62,9 +63,10 @@ on:
       # Builds every key between them in file key order, inclusive.
       # Example: 1.6.x-1.8.x, 26.3
       mc_version_key_range:
-        description: (for mode=range) Comma-separated keys from mcmeta_lookup.json
+        description: Comma-separated keys from mcmeta_lookup.json
         type: string
         required: false
+        default: (for mode=range)
         # required-ness is enforced in a step below
         # Required when mode=range
 
@@ -82,9 +84,10 @@ on:
       # Full manual version string when bump=manual (i.e. 97.0.0)
       # for manual control over version format migration, etc
       version_override:
-        description: Full version number (for bump=manual)
+        description: Full version number 
         type: string
         required: false
+        default: (for bump=manual)
         # required-ness is enforced in a step below
         # Required when bump=manual
 
