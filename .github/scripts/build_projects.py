@@ -557,7 +557,7 @@ def main() -> None:
         # print(f"Changelog:\n{changelog}")
         # print("=============")
 
-    # --- write metadata.json for the publish workflow -----------------------------
+    # --- write metadata.json for the artifact -----------------------------
     (out_dir / "metadata.json").write_text(
         json.dumps(metadata, indent=2) + "\n", encoding="utf-8"
     )

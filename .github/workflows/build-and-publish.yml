@@ -133,7 +133,7 @@ env:
 # =============================================================================
 # JOBS
 # -----------------------------------------------------------------------------
-# One job is enough: validate → github meta → build script → upload artifact.
+# Validate → github meta → build script → upload artifact → publish(optional)
 # =============================================================================
 jobs:
   build:
@@ -180,6 +180,17 @@ jobs:
           set -euo pipefail
 
           # --- Enforce input combinations ------------------------------------
+          if [ "$MC_VERSION_KEY_SINGLE" = "(for mode=single)" ]; then
+            MC_VERSION_KEY_SINGLE=""
+          fi
+
+          if [ "$MC_VERSION_KEY_RANGE" = "(for mode=range)" ]; then
+            MC_VERSION_KEY_RANGE=""
+          fi
+
+          if [ "$VERSION_OVERRIDE" = "(for bump=manual)" ]; then
+            VERSION_OVERRIDE=""
+          fi
 
           if [ "$MODE" = "single" ] && [ -z "${MC_VERSION_KEY_SINGLE// }" ]; then
             echo "Error: mc_version_key_single is required when mode=single"
@@ -502,7 +513,7 @@ jobs:
       #   - zip packs
       #   - write metadata.json
       # metadata entries include version_number, game_versions, changelog, file
-      # name, etc., so the publish workflow can upload without rebuilding.
+      # name, etc., so the publish job can upload without rebuilding.
       #
       # Environment variables are the script’s only configuration interface.
       # -----------------------------------------------------------------------
@@ -526,9 +537,9 @@ jobs:
       # -----------------------------------------------------------------------
       # Stores build/dist/ (all zips + metadata.json) on GitHub’s artifact storage
       # for this workflow run. You can download them from the run page, or the
-      # publish workflow can pull them with actions/download-artifact + run-id.
+      # publish job can pull them.
       #
-      # name: project-build  ← publish workflow must use this same name
+      # name: project-build  ← publish job must use this same name
       # -----------------------------------------------------------------------
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
