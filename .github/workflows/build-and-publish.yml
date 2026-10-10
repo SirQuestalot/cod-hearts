@@ -127,7 +127,7 @@ env:
   MODS_ROOT: mods
   BUILD_SCRIPT: .github/scripts/build_artifact.py
   ARTIFACT_NAME: >-
-    ${{ 
+    ${{
       run-artifact
     }}_${{
       inputs.mode 
