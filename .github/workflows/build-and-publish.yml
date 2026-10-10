@@ -24,7 +24,7 @@ run-name: >-
     || inputs.mode == 'range' && inputs.mc_version_key_range
     || 'all'
   }} | ${{
-    inputs.bump == 'manual' && format('manual-{0}', inputs.version_override)
+    inputs.bump == 'manual' && format('manual {0}', inputs.version_override)
     || inputs.bump
   }} | ${{ 
     inputs.publish && 'publish' || 'no publish' 
