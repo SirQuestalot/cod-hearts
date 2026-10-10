@@ -17,14 +17,18 @@ name: Build and Publish
 #   range | 1.6.x-1.8.x, 26.3 | patch | publish
 #   all | all | feature | no publish
 run-name: >-
-  ${{ inputs.mode }} | ${{
+  ${{ 
+    inputs.mode 
+  }} | ${{
     inputs.mode == 'single' && inputs.mc_version_key_single
     || inputs.mode == 'range' && inputs.mc_version_key_range
     || 'all'
   }} | ${{
-    inputs.bump == 'manual' && format('manual({0})', inputs.version_override)
+    inputs.bump == 'manual' && format('manual-{0}', inputs.version_override)
     || inputs.bump
-  }} | ${{ inputs.publish && 'publish' || 'no-publish' }}
+  }} | ${{ 
+    inputs.publish && 'publish' || 'no publish' 
+  }}
 
 # =============================================================================
 # Only workflow_dispatch: a human (or API call) starts it from the Actions UI.
@@ -130,10 +134,10 @@ env:
       || inputs.mode == 'range' && inputs.mc_version_key_range
       || 'all'
     }}_${{
-      inputs.bump == 'manual' && format('manual({0})', inputs.version_override)
+      inputs.bump == 'manual' && format('manual-{0}', inputs.version_override)
       || inputs.bump
     }}_${{ 
-      inputs.publish && 'publish' || 'no-publish' 
+      inputs.publish && 'publish' || 'nopublish' 
     }}_${{ 
       github.run_id 
     }}
@@ -519,7 +523,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       # -----------------------------------------------------------------------
-      # STEP: Build zips and metadata
+      # STEP: Build zips and metadata for artifact
       # -----------------------------------------------------------------------
       # Hands off to the external Python script. All real build logic lives there:
       #   - parse lookup rows
