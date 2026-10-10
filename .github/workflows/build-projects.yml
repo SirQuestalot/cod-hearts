@@ -2,7 +2,7 @@
 # Shown in the GitHub Actions tab. Also the string other workflows would use
 # if they watched with workflow_run (e.g. workflows: ["Build Projects"]).
 # -----------------------------------------------------------------------------
-# Manual workflow: pick mcmeta_lookup.json keys, build resource-pack zips,
+# Manual workflow: pick format_lookup.json keys, build resource-pack zips,
 # write metadata.json, upload everything as a GitHub Actions artifact.
 # -----------------------------------------------------------------------------
 # Does NOT publish to Modrinth (that is a separate workflow that downloads
@@ -40,7 +40,7 @@ on:
     # -------------------------------------------------------------------------
     inputs:
 
-      # How many mcmeta_lookup.json keys to build this run
+      # How many format_lookup.json keys to build this run
       # single = one key | range = several | all = every key in the file
       mode:
         description: Which mc versions to build
@@ -48,22 +48,22 @@ on:
         options: [single, range, all]
         default: single
 
-      # Must match a top-level key in mcmeta_lookup.json
+      # Must match a top-level key in format_lookup.json
       # Example: 26.3 or 1.21.9-1.21.10
       mc_version_key_single:
-        description: One key from mcmeta_lookup.json
+        description: One key from format_lookup.json
         type: string
         required: false
         default: (for mode=single)
         # required-ness is enforced in a step below
         # Required when mode=single
 
-      # Exactly two comma-separated keys from mcmeta_lookup.json
+      # Exactly two comma-separated keys from format_lookup.json
       # (order does not matter).
       # Builds every key between them in file key order, inclusive.
       # Example: 1.6.x-1.8.x, 26.3
       mc_version_key_range:
-        description: Comma-separated keys from mcmeta_lookup.json
+        description: Comma-separated keys from format_lookup.json
         type: string
         required: false
         default: (for mode=range)
@@ -112,7 +112,7 @@ on:
 # Paths are relative to the repo root after checkout.
 # =============================================================================
 env:
-  LOOKUP_FILE: .github/mcmeta_lookup.json
+  LOOKUP_FILE: .github/format_lookup.json
   CONTENT_ROOT: core/content
   META_ROOT: core/meta
   MODS_ROOT: mods
@@ -140,7 +140,7 @@ jobs:
       # STEP: Checkout
       # -----------------------------------------------------------------------
       # actions/checkout clones this repo into the workspace so later steps
-      # can read mcmeta_lookup.json, core/, mods/, and the Python script.
+      # can read format_lookup.json, core/, mods/, and the Python script.
       # Without this, the runner has no project files.
       # -----------------------------------------------------------------------
       - name: Checkout repository
@@ -153,7 +153,7 @@ jobs:
       #
       # This step is pure bash. It does NOT build zips. It only:
       #   1) Enforces input combinations (single needs an mc version key, range needs two, etc.)
-      #   2) Reads every mc version key from mcmeta_lookup.json
+      #   2) Reads every mc version key from format_lookup.json
       #   3) Builds the list TARGETS of mc version keys this run will process
       #   4) Writes that list to GITHUB_OUTPUT as a multiline "targets" value
       #       - steps.plan.outputs.targets (newline-separated keys for the script)
@@ -214,7 +214,7 @@ jobs:
           fi
 
           # =============================================================================
-          # Load keys from mcmeta_lookup.json (preserve file key order)
+          # Load keys from format_lookup.json (preserve file key order)
           # -----------------------------------------------------------------------------
           # ALL_KEYS = every top-level JSON key, in file order
           # (e.g. 26.3, 26.2, …, 1.0-1.5.x).
@@ -290,7 +290,7 @@ jobs:
           # =============================================================================
           # Build TARGETS from mode
           # -----------------------------------------------------------------------------
-          # TARGETS = ordered list of mcmeta_lookup.json keys this workflow run will build.
+          # TARGETS = ordered list of format_lookup.json keys this workflow run will build.
           # Starts empty; the case below fills it from MODE + the relevant inputs.
           # =============================================================================
           TARGETS=()
