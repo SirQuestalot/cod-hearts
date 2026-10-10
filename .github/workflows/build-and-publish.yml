@@ -22,7 +22,7 @@ run-name: >-
     || inputs.mode == 'range' && inputs.mc_version_key_range
     || 'all'
   }} | ${{
-    inputs.bump == 'manual' && format('manual ({0})', inputs.version_override)
+    inputs.bump == 'manual' && format('manual({0})', inputs.version_override)
     || inputs.bump
   }} | ${{ inputs.publish && 'publish' || 'no-publish' }}
 
@@ -122,6 +122,21 @@ env:
   META_ROOT: core/meta
   MODS_ROOT: mods
   BUILD_SCRIPT: .github/scripts/build_artifact.py
+  ARTIFACT_NAME: >-
+    ${{ 
+      inputs.mode 
+    }}_${{
+      inputs.mode == 'single' && inputs.mc_version_key_single
+      || inputs.mode == 'range' && inputs.mc_version_key_range
+      || 'all'
+    }}_${{
+      inputs.bump == 'manual' && format('manual({0})', inputs.version_override)
+      || inputs.bump
+    }}_${{ 
+      inputs.publish && 'publish' || 'no-publish' 
+    }}_${{ 
+      github.run_id 
+    }}
   PUBLISH_SCRIPT: .github/scripts/publish_to_modrinth.py
   MODRINTH_API: https://api.modrinth.com/v2
   GITHUB_API: https://api.github.com
@@ -545,7 +560,7 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: project-build
+          name: ${{ env.ARTIFACT_NAME }}
           path: build/dist/
           if-no-files-found: error   # fail the job if the script produced nothing
 
@@ -565,7 +580,7 @@ jobs:
       - name: Download build artifact
         uses: actions/download-artifact@v7
         with:
-          name: project-build
+          name: ${{ env.ARTIFACT_NAME }}
           path: dist
 
       - name: Publish versions to Modrinth
