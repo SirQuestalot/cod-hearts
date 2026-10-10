@@ -128,7 +128,7 @@ env:
   BUILD_SCRIPT: .github/scripts/build_artifact.py
   ARTIFACT_NAME: >-
     ${{ 
-    run-artifact
+      run-artifact
     }}_${{
       inputs.mode 
     }}_${{
