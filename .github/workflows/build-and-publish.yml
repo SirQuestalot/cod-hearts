@@ -24,7 +24,7 @@ run-name: >-
   }} | ${{
     inputs.bump == 'manual' && format('manual ({0})', inputs.version_override)
     || inputs.bump
-  }} | ${{ inputs.publish && 'publish' || 'no publish' }}
+  }} | ${{ inputs.publish && 'publish' || 'no-publish' }}
 
 # =============================================================================
 # Only workflow_dispatch: a human (or API call) starts it from the Actions UI.
