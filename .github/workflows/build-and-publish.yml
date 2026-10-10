@@ -6,18 +6,18 @@
 # Optionally publish every entry in that artifact to Modrinth.
 # -----------------------------------------------------------------------------
 # Companion scripts (build logic and publish):
-#   .github/scripts/build_projects.py
+#   .github/scripts/build_artifact.py
 #   .github/scripts/publish_to_modrinth.py
 # =============================================================================
 name: Build and Publish
 
 # run-name examples:
-#   Build: single | 26.3 | patch | publish
-#   Build: single | 1.6.x-1.8.x | manual (1.0.2) | no publish
-#   Build: range | 1.6.x-1.8.x, 26.3 | patch | publish
-#   Build: all | all | feature | no publish
+#   single | 26.3 | patch | publish
+#   single | 1.6.x-1.8.x | manual (1.0.2) | no publish
+#   range | 1.6.x-1.8.x, 26.3 | patch | publish
+#   all | all | feature | no publish
 run-name: >-
-  Build: ${{ inputs.mode }} | ${{
+  ${{ inputs.mode }} | ${{
     inputs.mode == 'single' && inputs.mc_version_key_single
     || inputs.mode == 'range' && inputs.mc_version_key_range
     || 'all'
@@ -121,7 +121,8 @@ env:
   CONTENT_ROOT: core/content
   META_ROOT: core/meta
   MODS_ROOT: mods
-  BUILD_SCRIPT: .github/scripts/build_projects.py
+  BUILD_SCRIPT: .github/scripts/build_artifact.py
+  PUBLISH_SCRIPT: .github/scripts/publish_to_modrinth.py
   MODRINTH_API: https://api.modrinth.com/v2
   GITHUB_API: https://api.github.com
   OUT_DIR: build/dist
@@ -572,7 +573,6 @@ jobs:
           MODRINTH_TOKEN: ${{ secrets.MODRINTH_VERSION_CREATE_TOKEN }}
           MODRINTH_API: ${{ env.MODRINTH_API }}
           DIST_DIR: dist
-          PUBLISH_SCRIPT: .github/scripts/publish_to_modrinth.py
         run: |
           set -euo pipefail
           if [ -z "${MODRINTH_TOKEN:-}" ]; then
