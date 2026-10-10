@@ -264,7 +264,7 @@ jobs:
               [ "$key" = "$want" ] && { echo "$key"; return 0; }
             done
             # >&2 = send this message to stderr (not mixed with the normal "print key" stdout)
-            echo "Error: key '$want' not found in $LOOKUP_FILE" >&2
+            echo "Error: key not found in $LOOKUP_FILE: '$want'" >&2
             return 1
           }
 
@@ -283,7 +283,7 @@ jobs:
                 return 0
               fi
             done
-            echo "Error: key '$want' not found in $LOOKUP_FILE" >&2
+            echo "Error: key not found in $LOOKUP_FILE: '$want'" >&2
             return 1
           }
 
