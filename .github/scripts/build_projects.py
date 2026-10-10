@@ -2,7 +2,7 @@
 """
 Build resource-pack zips + metadata.json from format_lookup.json and core/ trees.
 
-Invoked by .github/workflows/build-projects.yml with configuration via env vars:
+Invoked by .github/workflows/build-and_publish.yml with configuration via env vars:
   LOOKUP_FILE, CONTENT_ROOT, META_ROOT, MODS_ROOT, MODRINTH_API,
   PROJECT_SLUG, BUMP, VERSION_OVERRIDE, INCLUDE_MODS, CHANGELOG,
   DESCRIPTION, LICENSE, TARGETS, OUT_DIR, PACK_ICON, LICENSE_FILE
