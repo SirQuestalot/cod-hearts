@@ -5,8 +5,9 @@
 # write metadata.json, upload artifact project-build.
 # Optionally publish every entry in that artifact to Modrinth.
 # -----------------------------------------------------------------------------
-# Companion script (build logic):
+# Companion scripts (build logic and publish):
 #   .github/scripts/build_projects.py
+#   .github/scripts/publish_to_modrinth.py
 # =============================================================================
 name: Build and Publish
 
