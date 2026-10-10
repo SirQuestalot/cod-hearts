@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Build resource-pack zips + metadata.json from mcmeta_lookup.json and core/ trees.
+Build resource-pack zips + metadata.json from format_lookup.json and core/ trees.
 
 Invoked by .github/workflows/build-projects.yml with configuration via env vars:
   LOOKUP_FILE, CONTENT_ROOT, META_ROOT, MODS_ROOT, MODRINTH_API,
@@ -91,7 +91,7 @@ def http_json(url: str, user_agent: str, timeout: int = 60):
 
 
 # =============================================================================
-# mcmeta_lookup.json loading
+# format_lookup.json loading
 # =============================================================================
 # Expected root object keyed by version key:
 #   {
