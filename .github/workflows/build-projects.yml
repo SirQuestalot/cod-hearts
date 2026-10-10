@@ -1,23 +1,20 @@
 # =============================================================================
-# Shown in the GitHub Actions tab. Also the string other workflows would use
-# if they watched with workflow_run (e.g. workflows: ["Build Projects"]).
+# Build projects (+ optional publish)
 # -----------------------------------------------------------------------------
 # Manual workflow: pick format_lookup.json keys, build resource-pack zips,
-# write metadata.json, upload everything as a GitHub Actions artifact.
+# write metadata.json, upload artifact project-build.
+# Optionally publish every entry in that artifact to Modrinth.
 # -----------------------------------------------------------------------------
-# Does NOT publish to Modrinth (that is a separate workflow that downloads
-# this run's artifact by run id).
-# -----------------------------------------------------------------------------
-# Companion script (real build logic):
+# Companion script (build logic):
 #   .github/scripts/build_projects.py
 # =============================================================================
-name: Build Projects
+name: Build and Publish
 
 # run-name examples:
-#   Build: single | 26.3 | patch
-#   Build: single | 1.6.x-1.8.x | manual (1.0.2)
-#   Build: range | 1.6.x-1.8.x, 26.3 | patch
-#   Build: all | all | feature
+#   Build: single | 26.3 | patch | publish
+#   Build: single | 1.6.x-1.8.x | manual (1.0.2) | no publish
+#   Build: range | 1.6.x-1.8.x, 26.3 | patch | publish
+#   Build: all | all | feature | no publish
 run-name: >-
   Build: ${{ inputs.mode }} | ${{
     inputs.mode == 'single' && inputs.mc_version_key_single
@@ -26,7 +23,7 @@ run-name: >-
   }} | ${{
     inputs.bump == 'manual' && format('manual ({0})', inputs.version_override)
     || inputs.bump
-  }}
+  }} | ${{ inputs.publish && 'publish' || 'no publish' }}
 
 # =============================================================================
 # Only workflow_dispatch: a human (or API call) starts it from the Actions UI.
@@ -102,6 +99,13 @@ on:
         description: Changelog body (diff notes)
         type: string
         required: true
+
+      # When true, publish job runs after a successful build.
+      publish:
+        description: Publish built versions to Modrinth
+        type: boolean
+        default: false
+
 
 # =============================================================================
 # JOB-LEVEL ENVIRONMENT
@@ -419,7 +423,7 @@ jobs:
         id: github_meta
         env:
           GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}    # owner/name
+          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
 
@@ -531,3 +535,138 @@ jobs:
           name: project-build
           path: build/dist/
           if-no-files-found: error   # fail the job if the script produced nothing
+
+  # ---------------------------------------------------------------------------
+  # Publish to Modrinth
+  # ---------------------------------------------------------------------------
+  publish:
+    needs: build
+    if: ${{ inputs.publish }}
+    runs-on: ubuntu-latest
+    environment: modrinth_publish
+
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: project-build
+          path: dist
+
+      - name: Publish versions to Modrinth
+        env:
+          MODRINTH_TOKEN: ${{ secrets.MODRINTH_VERSION_CREATE_TOKEN }}
+          MODRINTH_API: ${{ env.MODRINTH_API }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${MODRINTH_TOKEN:-}" ]; then
+            echo "Error: repository secret MODRINTH_TOKEN is not set"
+            exit 1
+          fi
+
+          META="dist/metadata.json"
+          if [ ! -f "$META" ]; then
+            echo "Error: $META not found in artifact"
+            exit 1
+          fi
+
+          python3 - <<'PUBLISH_END'
+          import json
+          import os
+          import sys
+          import urllib.error
+          import urllib.request
+          from pathlib import Path
+
+          api = os.environ["MODRINTH_API"].rstrip("/")
+          token = os.environ["MODRINTH_TOKEN"]
+          meta_path = Path("dist/metadata.json")
+          meta = json.loads(meta_path.read_text(encoding="utf-8"))
+
+          project_id = meta["project_id"]
+          title = meta.get("project_title") or meta.get("project_slug") or project_id
+          entries = meta.get("entries") or []
+          if not entries:
+              raise SystemExit("metadata.json has no entries to publish")
+
+          # multipart builder (stdlib only)
+          def encode_multipart(fields, files):
+              boundary = "----ModrinthBoundary7MA4YWxkTrZu0gW"
+              body = bytearray()
+              for name, value in fields.items():
+                  body.extend(f"--{boundary}\r\n".encode())
+                  body.extend(
+                      f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode()
+                  )
+                  body.extend(value if isinstance(value, bytes) else str(value).encode("utf-8"))
+                  body.extend(b"\r\n")
+              for name, path in files.items():
+                  data = path.read_bytes()
+                  body.extend(f"--{boundary}\r\n".encode())
+                  body.extend(
+                      (
+                          f'Content-Disposition: form-data; name="{name}"; '
+                          f'filename="{path.name}"\r\n'
+                          f"Content-Type: application/zip\r\n\r\n"
+                      ).encode()
+                  )
+                  body.extend(data)
+                  body.extend(b"\r\n")
+              body.extend(f"--{boundary}--\r\n".encode())
+              content_type = f"multipart/form-data; boundary={boundary}"
+              return bytes(body), content_type
+
+          for entry in entries:
+              key = entry["key"]
+              ver_num = entry["version_number"]
+              changelog = entry.get("changelog") or ""
+              game_versions = entry["game_versions"]
+              file_name = entry["file"]
+              zip_path = Path("dist") / file_name
+              if not zip_path.is_file():
+                  raise SystemExit(f"Missing zip for key {key!r}: {zip_path}")
+
+              name = f"{title} {key}"
+              payload = {
+                  "name": name,
+                  "version_number": ver_num,
+                  "changelog": changelog,
+                  "dependencies": [],
+                  "game_versions": game_versions,
+                  "version_type": "release",
+                  "loaders": ["minecraft"],
+                  "featured": False,
+                  "project_id": project_id,
+                  "file_parts": ["file"],
+                  "primary_file": "file",
+              }
+              data_json = json.dumps(payload)
+              body, content_type = encode_multipart(
+                  {"data": data_json},
+                  {"file": zip_path},
+              )
+              req = urllib.request.Request(
+                  f"{api}/version",
+                  data=body,
+                  method="POST",
+                  headers={
+                      "Authorization": token,
+                      "User-Agent": f"{meta.get('project_slug', 'resourcepack')}-publish/1.0",
+                      "Content-Type": content_type,
+                  },
+              )
+              print(f"Publishing {key!r} → {ver_num} ({file_name}) ...")
+              try:
+                  with urllib.request.urlopen(req, timeout=120) as resp:
+                      result = json.loads(resp.read().decode("utf-8"))
+              except urllib.error.HTTPError as e:
+                  err_body = e.read().decode("utf-8", errors="replace")
+                  raise SystemExit(
+                      f"Modrinth HTTP {e.code} publishing {key!r}:\n{err_body}"
+                  ) from e
+
+              vid = result.get("id", "?")
+              print(f"  OK version id={vid} number={result.get('version_number')}")
+
+          print(f"\nPublished {len(entries)} version(s).")
+          PUBLISH_END
