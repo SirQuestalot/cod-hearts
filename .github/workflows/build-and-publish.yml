@@ -547,6 +547,9 @@ jobs:
     environment: modrinth_publish
 
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
       - name: Download build artifact
         uses: actions/download-artifact@v7
         with:
@@ -555,8 +558,14 @@ jobs:
 
       - name: Publish versions to Modrinth
         env:
-          MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
+          MODRINTH_TOKEN: ${{ secrets.MODRINTH_VERSION_CREATE_TOKEN }}
           MODRINTH_API: ${{ env.MODRINTH_API }}
           DIST_DIR: dist
           PUBLISH_SCRIPT: .github/scripts/publish_to_modrinth.py
-        run: python3 "$PUBLISH_SCRIPT"
+        run: |
+          set -euo pipefail
+          if [ -z "${MODRINTH_TOKEN:-}" ]; then
+            echo "Error: MODRINTH_TOKEN is not set"
+            exit 1
+          fi
+          python3 "$PUBLISH_SCRIPT"
