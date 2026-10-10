@@ -128,6 +128,8 @@ env:
   BUILD_SCRIPT: .github/scripts/build_artifact.py
   ARTIFACT_NAME: >-
     ${{ 
+    run-artifact
+    }}_${{
       inputs.mode 
     }}_${{
       inputs.mode == 'single' && inputs.mc_version_key_single
