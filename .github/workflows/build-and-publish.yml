@@ -561,7 +561,8 @@ jobs:
       # for this workflow run. You can download them from the run page, or the
       # publish job can pull them.
       #
-      # name: project-build  ← publish job must use this same name
+      # ${{ env.ARTIFACT_NAME }}  ← preflight and publish jobs must use this same name 
+      #                             when finding the artifact
       # -----------------------------------------------------------------------
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
