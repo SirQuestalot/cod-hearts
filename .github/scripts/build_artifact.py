@@ -8,6 +8,7 @@ Invoked by .github/workflows/build-and_publish.yml with configuration via env va
   DESCRIPTION, LICENSE, TARGETS, OUT_DIR, PACK_ICON, LICENSE_FILE
 
 Does not publish to Modrinth — only writes zips + metadata.json under OUT_DIR.
+Runs local validate_artifact() on OUT_DIR before exiting successfully.
 """
 
 from __future__ import annotations
@@ -21,6 +22,14 @@ import urllib.error
 import urllib.request
 import zipfile
 from pathlib import Path
+import sys
+
+# Sibling import: validate_artifact.py lives next to this script in CI checkout
+_SCRIPT_DIR = Path(__file__).resolve().parent
+if str(_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR))
+
+from validate_artifact import validate_artifact
 
 
 # =============================================================================
@@ -562,6 +571,16 @@ def main() -> None:
         json.dumps(metadata, indent=2) + "\n", encoding="utf-8"
     )
     print("\nWrote metadata.json")
+
+
+    # --- local artifact checklist before workflow uploads -------------------
+    errors = validate_artifact(out_dir)
+    if errors:
+        print(f"Artifact validation failed with {len(errors)} problem(s):")
+        for i, msg in enumerate(errors, 1):
+            print(f"  {i}. {msg}")
+        raise SystemExit(1)
+    print("Artifact validation passed.")
 
 
 if __name__ == "__main__":

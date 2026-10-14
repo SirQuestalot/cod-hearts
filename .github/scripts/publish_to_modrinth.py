@@ -2,20 +2,36 @@
 """
 Publish resource-pack zips from a build artifact's metadata.json to Modrinth.
 
+Flow:
+  1. Local validate_artifact(DIST_DIR) — same checklist as the build job
+  2. Read-only Modrinth identity checks (token + project id vs slug)
+  3. Create each version with retries on transient errors; fail-fast otherwise
+
 Env:
   MODRINTH_API   - API base (default https://api.modrinth.com/v2)
   MODRINTH_TOKEN - PAT with VERSION_CREATE
-  DIST_DIR       - folder containing metadata.json and the zip files
-                   (default: dist)
+  DIST_DIR       - folder containing metadata.json and the zip files (default: dist)
 """
 
 from __future__ import annotations
 
 import json
 import os
+import sys
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+
+_SCRIPT_DIR = Path(__file__).resolve().parent
+if str(_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR))
+
+from validate_artifact import validate_artifact  # noqa: E402
+
+MAX_ATTEMPTS = 5
+REQUEST_TIMEOUT_SEC = 240
+BACKOFF_CAP_SEC = 60
 
 
 def env(name: str, default: str | None = None) -> str:
@@ -55,23 +71,119 @@ def encode_multipart(fields: dict, files: dict) -> tuple[bytes, str]:
     return bytes(body), content_type
 
 
+def is_transient(exc: BaseException) -> bool:
+    if isinstance(exc, urllib.error.HTTPError):
+        if exc.code in (408, 429):
+            return True
+        if 500 <= exc.code <= 599:
+            return True
+        return False
+    if isinstance(exc, urllib.error.URLError):
+        return True
+    if isinstance(exc, TimeoutError):
+        return True
+    return False
+
+
+def retry_after_seconds(exc: BaseException, attempt: int) -> float:
+    if isinstance(exc, urllib.error.HTTPError):
+        ra = exc.headers.get("Retry-After") if exc.headers else None
+        if ra:
+            try:
+                return min(float(ra), float(BACKOFF_CAP_SEC))
+            except ValueError:
+                pass
+    base = min(2**attempt, BACKOFF_CAP_SEC)
+    return float(min(base, BACKOFF_CAP_SEC))
+
+
+def create_version(
+    api: str,
+    token: str,
+    ua: str,
+    payload: dict,
+    zip_path: Path,
+) -> dict:
+    body, content_type = encode_multipart(
+        {"data": json.dumps(payload)},
+        {"file": zip_path},
+    )
+    req = urllib.request.Request(
+        f"{api}/version",
+        data=body,
+        method="POST",
+        headers={
+            "Authorization": token,
+            "User-Agent": ua,
+            "Content-Type": content_type,
+        },
+    )
+    with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT_SEC) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def verify_project_identity(
+    api: str, token: str, project_id: str, slug: str, ua: str
+) -> None:
+    """Read-only: token works and metadata.project_id matches API for slug."""
+    url = f"{api}/project/{slug}"
+    req = urllib.request.Request(
+        url,
+        headers={
+            "Authorization": token,
+            "User-Agent": ua,
+            "Accept": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            project = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")
+        raise SystemExit(
+            f"Modrinth HTTP {e.code} during identity check GET {url}:\n{body}"
+        ) from e
+    except urllib.error.URLError as e:
+        raise SystemExit(
+            f"Network error during identity check GET {url}: {e.reason}"
+        ) from e
+
+    remote_id = project.get("id")
+    if remote_id != project_id:
+        raise SystemExit(
+            f"metadata.project_id {project_id!r} does not match "
+            f"API project id {remote_id!r} for slug {slug!r}"
+        )
+
+
 def main() -> None:
     api = env("MODRINTH_API", "https://api.modrinth.com/v2").rstrip("/")
     token = env("MODRINTH_TOKEN")
     dist_dir = Path(os.environ.get("DIST_DIR", "dist"))
 
-    meta_path = dist_dir / "metadata.json"
-    if not meta_path.is_file():
-        raise SystemExit(f"metadata.json not found: {meta_path}")
+    errors = validate_artifact(dist_dir)
+    if errors:
+        print(f"Artifact validation failed with {len(errors)} problem(s):")
+        for i, msg in enumerate(errors, 1):
+            print(f"  {i}. {msg}")
+        raise SystemExit(1)
+    print("Artifact validation passed.")
 
+    meta_path = dist_dir / "metadata.json"
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
     project_id = meta["project_id"]
     title = meta.get("project_title") or meta.get("project_slug") or project_id
     slug = meta.get("project_slug") or "resourcepack"
     entries = meta.get("entries") or []
-
     if not entries:
         raise SystemExit("metadata.json has no entries to publish")
+
+    ua = f"{slug}-publish/1.0"
+
+    verify_project_identity(api, token, project_id, slug, ua)
+    print(f"Modrinth identity OK for project {slug!r} ({project_id}).")
+
+    succeeded: list[str] = []
 
     for entry in entries:
         key = entry["key"]
@@ -80,9 +192,6 @@ def main() -> None:
         game_versions = entry["game_versions"]
         file_name = entry["file"]
         zip_path = dist_dir / file_name
-
-        if not zip_path.is_file():
-            raise SystemExit(f"Missing zip for key {key!r}: {zip_path}")
 
         payload = {
             "name": f"{title} {key}",
@@ -98,38 +207,51 @@ def main() -> None:
             "primary_file": "file",
         }
 
-        body, content_type = encode_multipart(
-            {"data": json.dumps(payload)},
-            {"file": zip_path},
-        )
-
-        req = urllib.request.Request(
-            f"{api}/version",
-            data=body,
-            method="POST",
-            headers={
-                "Authorization": token,
-                "User-Agent": f"{slug}-publish/1.0",
-                "Content-Type": content_type,
-            },
-        )
-
         print(f"Publishing {key!r} → {ver_num} ({file_name}) ...")
-        try:
-            with urllib.request.urlopen(req, timeout=120) as resp:
-                result = json.loads(resp.read().decode("utf-8"))
-        except urllib.error.HTTPError as e:
-            err_body = e.read().decode("utf-8", errors="replace")
+        last_error: BaseException | None = None
+        result = None
+
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            try:
+                result = create_version(api, token, ua, payload, zip_path)
+                last_error = None
+                break
+            except Exception as e:
+                last_error = e
+                if not is_transient(e) or attempt >= MAX_ATTEMPTS:
+                    break
+                wait = retry_after_seconds(e, attempt)
+                detail = ""
+                if isinstance(e, urllib.error.HTTPError):
+                    detail = f" HTTP {e.code}"
+                print(
+                    f"  transient error on attempt {attempt}/{MAX_ATTEMPTS}"
+                    f"{detail}; retrying in {wait:.0f}s ..."
+                )
+                time.sleep(wait)
+
+        if last_error is not None or result is None:
+            if succeeded:
+                print(
+                    "Versions already created in this run "
+                    "(manual cleanup on Modrinth may be needed):"
+                )
+                for line in succeeded:
+                    print(f"  - {line}")
+            if isinstance(last_error, urllib.error.HTTPError):
+                err_body = last_error.read().decode("utf-8", errors="replace")
+                raise SystemExit(
+                    f"Modrinth HTTP {last_error.code} publishing {key!r}:\n{err_body}"
+                ) from last_error
             raise SystemExit(
-                f"Modrinth HTTP {e.code} publishing {key!r}:\n{err_body}"
-            ) from e
+                f"Failed publishing {key!r}: {last_error}"
+            ) from last_error
 
-        print(
-            f"  OK version id={result.get('id', '?')} "
-            f"number={result.get('version_number')}"
-        )
+        vid = result.get("id", "?")
+        print(f"  OK version id={vid} number={result.get('version_number')}")
+        succeeded.append(f"{key} → {ver_num} (id={vid})")
 
-    print(f"\nPublished {len(entries)} version(s).")
+    print(f"\nPublished {len(succeeded)} version(s).")
 
 
 if __name__ == "__main__":
