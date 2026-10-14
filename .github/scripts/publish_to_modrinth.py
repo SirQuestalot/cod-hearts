@@ -185,7 +185,7 @@ def main() -> None:
 
     succeeded: list[str] = []
 
-    for entry in entries:
+    for entry in reversed(entries):
         key = entry["key"]
         ver_num = entry["version_number"]
         changelog = entry.get("changelog") or ""
