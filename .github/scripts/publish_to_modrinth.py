@@ -209,15 +209,24 @@ def main() -> None:
 
         print(f"Publishing {key!r} → {ver_num} ({file_name}) ...")
         last_error: BaseException | None = None
+        last_err_body = ""
         result = None
 
         for attempt in range(1, MAX_ATTEMPTS + 1):
             try:
                 result = create_version(api, token, ua, payload, zip_path)
                 last_error = None
+                last_err_body = ""
                 break
             except Exception as e:
                 last_error = e
+                # Drain HTTP body once (can only be read once) for logs and final exit
+                last_err_body = ""
+                if isinstance(e, urllib.error.HTTPError):
+                    try:
+                        last_err_body = e.read().decode("utf-8", errors="replace")
+                    except Exception:
+                        last_err_body = ""
                 if not is_transient(e) or attempt >= MAX_ATTEMPTS:
                     break
                 wait = retry_after_seconds(e, attempt)
@@ -239,9 +248,8 @@ def main() -> None:
                 for line in succeeded:
                     print(f"  - {line}")
             if isinstance(last_error, urllib.error.HTTPError):
-                err_body = last_error.read().decode("utf-8", errors="replace")
                 raise SystemExit(
-                    f"Modrinth HTTP {last_error.code} publishing {key!r}:\n{err_body}"
+                    f"Modrinth HTTP {last_error.code} publishing {key!r}:\n{last_err_body}"
                 ) from last_error
             raise SystemExit(
                 f"Failed publishing {key!r}: {last_error}"
