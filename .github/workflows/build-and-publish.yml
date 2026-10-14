@@ -48,7 +48,7 @@ on:
       # How many format_lookup.json keys to build this run
       # single = one key | range = several | all = every key in the file
       mode:
-        description: Which mc versions to build
+        description: Build Mode
         type: choice
         options: [single, range, all]
         default: single
@@ -56,7 +56,7 @@ on:
       # Must match a top-level key in format_lookup.json
       # Example: 26.3 or 1.21.9-1.21.10
       mc_version_key_single:
-        description: One key from format_lookup.json
+        description: Single key from format_lookup.json
         type: string
         required: false
         default: (for mode=single)
@@ -81,7 +81,7 @@ on:
       #   patch   → bump .patch
       #   manual  → use version_override exactly (mode=single only)
       bump:
-        description: New version type
+        description: Bump type
         type: choice
         options: [patch, feature, manual]
         default: patch
@@ -110,7 +110,7 @@ on:
 
       # When true, publish job runs after a successful build.
       publish:
-        description: Publish built versions to Modrinth
+        description: Publish to Modrinth
         type: boolean
         default: false
 
