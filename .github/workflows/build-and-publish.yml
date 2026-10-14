@@ -2,11 +2,14 @@
 # Build projects (+ optional publish)
 # -----------------------------------------------------------------------------
 # Manual workflow: pick format_lookup.json keys, build resource-pack zips,
-# write metadata.json, upload artifact project-build.
-# Optionally publish every entry in that artifact to Modrinth.
+# write metadata.json, run local validate_artifact on the output directory,
+# then upload a run-scoped artifact.
+# Optionally publish every entry to Modrinth (re-validates after download,
+# then identity checks, then creates with retries).
 # -----------------------------------------------------------------------------
-# Companion scripts (build logic and publish):
+# Companion scripts:
 #   .github/scripts/build_artifact.py
+#   .github/scripts/validate_artifact.py
 #   .github/scripts/publish_to_modrinth.py
 # =============================================================================
 name: Build and Publish
@@ -155,7 +158,9 @@ env:
 # =============================================================================
 # JOBS
 # -----------------------------------------------------------------------------
-# Validate → github meta → build script → upload artifact → publish(optional)
+# build: validate inputs → github meta → build script (includes local
+#        artifact validation) → upload artifact
+# publish (optional): download artifact → local re-validate → identity → create
 # =============================================================================
 jobs:
   build:
@@ -558,8 +563,9 @@ jobs:
       # STEP: Upload artifacts
       # -----------------------------------------------------------------------
       # Stores build/dist/ (all zips + metadata.json) on GitHub’s artifact storage
-      # for this workflow run. You can download them from the run page, or the
-      # publish job can pull them.
+      # for this workflow run. Only runs if build_artifact.py succeeded, including
+      # validate_artifact(). You can download them from the run page, or the
+      # publish job can pull them automatically.
       #
       # ${{ env.ARTIFACT_NAME }}  ← publish job must use this same name 
       #                             when finding the artifact
