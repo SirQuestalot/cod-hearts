@@ -7,6 +7,9 @@ on:
       - 'core/pack.png'
   workflow_dispatch:
 
+env:
+  PACK_ICON: core/pack.png
+
 jobs:
   sync:
     runs-on: ubuntu-latest
@@ -24,7 +27,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          convert core/pack.png -scale 1000% /tmp/icon.png
+          convert "$PACK_ICON" -scale 1000% /tmp/icon.png
 
           echo "Uploading upscaled icon to Modrinth..."
           HTTP_CODE=$(curl -sS -o /tmp/modrinth_response.txt -w "%{http_code}" \
