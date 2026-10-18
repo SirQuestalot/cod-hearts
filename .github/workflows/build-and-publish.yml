@@ -33,6 +33,10 @@ run-name: >-
     inputs.publish && 'publish' || 'no publish' 
   }}
 
+concurrency:
+  group: cod-hearts-automation
+  cancel-in-progress: false
+
 # =============================================================================
 # Only workflow_dispatch: a human (or API call) starts it from the Actions UI.
 # No push/tag/schedule — avoids accidental builds.
