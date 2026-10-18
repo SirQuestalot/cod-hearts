@@ -1,5 +1,9 @@
 name: Sync LICENSE to Modrinth
 
+concurrency:
+  group: cod-hearts-automation
+  cancel-in-progress: false
+
 on:
   push:
     branches: [main]
