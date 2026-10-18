@@ -3,10 +3,9 @@
 Publish resource-pack zips from a build artifact's metadata.json to Modrinth.
 
 Flow:
-  1. Attach ## [version] - UTC date headings to shared changelog_body
-  2. Local validate_artifact(DIST_DIR)
-  3. Read-only Modrinth identity checks (token + project id vs slug)
-  4. Create each version (oldest first) with retries on transient errors; fail-fast otherwise
+  1. Local validate_artifact(DIST_DIR)
+  2. Read-only Modrinth identity checks (token + project id vs slug)
+  3. Create each version (oldest first) with shared changelog_body; retries; fail-fast
 
 Env:
   MODRINTH_API   - API base (default https://api.modrinth.com/v2)
@@ -22,7 +21,6 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
 from pathlib import Path
 
 _SCRIPT_DIR = Path(__file__).resolve().parent
@@ -158,15 +156,18 @@ def verify_project_identity(
         )
 
 
-def final_changelog(version_number: str, body: str, day: str) -> str:
-    """KaC-style version heading + shared Unreleased body."""
-    return f"## [{version_number}] - {day}\n\n{body.strip()}\n"
-
-
 def main() -> None:
     api = env("MODRINTH_API", "https://api.modrinth.com/v2").rstrip("/")
     token = env("MODRINTH_TOKEN")
     dist_dir = Path(os.environ.get("DIST_DIR", "dist"))
+
+    errors = validate_artifact(dist_dir)
+    if errors:
+        print(f"Artifact validation failed with {len(errors)} problem(s):")
+        for i, msg in enumerate(errors, 1):
+            print(f"  {i}. {msg}")
+        raise SystemExit(1)
+    print("Artifact validation passed.")
 
     meta_path = dist_dir / "metadata.json"
     if not meta_path.is_file():
@@ -176,32 +177,11 @@ def main() -> None:
     body = meta.get("changelog_body")
     if not isinstance(body, str) or not body.strip():
         raise SystemExit("metadata.changelog_body is missing or empty")
+    changelog = body.strip()
 
     entries = meta.get("entries") or []
     if not entries:
         raise SystemExit("metadata.json has no entries to publish")
-
-    # Publish-time UTC date for KaC headings (after environment approval, etc.)
-    day = datetime.now(timezone.utc).date().isoformat()
-    print(f"Changelog heading date (UTC): {day}")
-
-    for entry in entries:
-        ver_num = entry.get("version_number")
-        if not isinstance(ver_num, str) or not ver_num.strip():
-            raise SystemExit("entry missing version_number")
-        entry["changelog"] = final_changelog(ver_num.strip(), body, day)
-
-    # Persist headed changelogs into the downloaded artifact for validate + debug
-    meta["entries"] = entries
-    meta_path.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
-
-    errors = validate_artifact(dist_dir)
-    if errors:
-        print(f"Artifact validation failed with {len(errors)} problem(s):")
-        for i, msg in enumerate(errors, 1):
-            print(f"  {i}. {msg}")
-        raise SystemExit(1)
-    print("Artifact validation passed.")
 
     project_id = meta["project_id"]
     title = meta.get("project_title") or meta.get("project_slug") or project_id
@@ -217,7 +197,6 @@ def main() -> None:
     for entry in reversed(entries):
         key = entry["key"]
         ver_num = entry["version_number"]
-        changelog = entry.get("changelog") or ""
         game_versions = entry["game_versions"]
         file_name = entry["file"]
         zip_path = dist_dir / file_name
