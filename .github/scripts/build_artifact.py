@@ -4,10 +4,11 @@ Build resource-pack zips + metadata.json from format_lookup.json and core/ trees
 
 Invoked by .github/workflows/build-and_publish.yml with configuration via env vars:
   LOOKUP_FILE, CONTENT_ROOT, META_ROOT, MODS_ROOT, MODRINTH_API,
-  PROJECT_SLUG, BUMP, VERSION_OVERRIDE, INCLUDE_MODS, CHANGELOG,
+  PROJECT_SLUG, BUMP, VERSION_OVERRIDE, INCLUDE_MODS, CHANGELOG_FILE,
   DESCRIPTION, LICENSE, TARGETS, OUT_DIR, PACK_ICON, LICENSE_FILE
 
 Does not publish to Modrinth — only writes zips + metadata.json under OUT_DIR.
+Reads CHANGELOG.md [Unreleased] into metadata.changelog_body.
 Runs local validate_artifact() on OUT_DIR before exiting successfully.
 """
 
@@ -358,31 +359,48 @@ def resolve_version_number(key: str, row, project_versions, bump: str, version_o
     return f"{mj}.{mi}.{pa + 1}", prev_num
 
 
-def build_changelog(new_num: str, prev_num, bump: str, changelog_body: str) -> str:
+def extract_unreleased(changelog_path: Path) -> str:
     """
-    Auto header + blank line + user body (Markdown-friendly on Modrinth).
+    Return the body under ## [Unreleased] in a Keep a Changelog file.
 
-      Manual release
-      1.0.0
-
-      Initial release
-      1.0.0
-
-      Feature release
-      1.0.0 → 1.1.0
-
-      Patch release
-      1.0.0 → 1.0.1
+    Takes lines after the Unreleased heading until the next version-style
+    heading (## [ ... ]) or end of file. Fails if the section is missing
+    or only whitespace.
     """
-    if bump == "manual":
-        header = f"Manual release\n{new_num}"
-    elif prev_num is None:
-        header = f"Initial release\n{new_num}"
-    elif bump == "feature":
-        header = f"Feature release\n{prev_num} → {new_num}"
-    else:
-        header = f"Patch release\n{prev_num} → {new_num}"
-    return f"{header}\n\n{changelog_body}"
+    if not changelog_path.is_file():
+        raise SystemExit(f"CHANGELOG file not found: {changelog_path}")
+
+    text = changelog_path.read_text(encoding="utf-8")
+    lines = text.splitlines()
+
+    start = None
+    for i, line in enumerate(lines):
+        # Allow optional extra spaces: ## [Unreleased]
+        if re.match(r"^##\s+\[Unreleased\]\s*$", line, flags=re.IGNORECASE):
+            start = i + 1
+            break
+
+    if start is None:
+        raise SystemExit(
+            f"No ## [Unreleased] section found in {changelog_path}"
+        )
+
+    body_lines: list[str] = []
+    for line in lines[start:]:
+        # Next KaC version heading ends Unreleased (e.g. ## [1.2.3] - 2026-01-01)
+        if re.match(r"^##\s+\[.+\]", line) and not re.match(
+            r"^##\s+\[Unreleased\]\s*$", line, flags=re.IGNORECASE
+        ):
+            break
+        body_lines.append(line)
+
+    body = "\n".join(body_lines).strip()
+    if not body:
+        raise SystemExit(
+            f"## [Unreleased] in {changelog_path} is empty — "
+            "add change notes before building"
+        )
+    return body
 
 
 # =============================================================================
@@ -478,7 +496,6 @@ def main() -> None:
     bump = env("BUMP")
     version_override = os.environ.get("VERSION_OVERRIDE", "").strip()
     include_mods = os.environ.get("INCLUDE_MODS", "true").lower() == "true"
-    changelog_body = env("CHANGELOG").strip().replace("\\n", "\n")    
     description = os.environ.get("DESCRIPTION", "")
     license_text = os.environ.get("LICENSE", "See LICENSE.txt")
     # Newline-separated lookup keys from the workflow plan step
@@ -493,8 +510,9 @@ def main() -> None:
     if not license_file.is_file():
         raise SystemExit(f"LICENSE_FILE not found: {license_file}")
 
-    if not changelog_body:
-        raise SystemExit("CHANGELOG is empty")
+    changelog_file = Path(os.environ.get("CHANGELOG_FILE", "CHANGELOG.md"))
+    changelog_body = extract_unreleased(changelog_file)
+    print(f"Unreleased changelog body from {changelog_file} ({len(changelog_body)} chars)")
 
     # --- load lookup; ensure every requested key exists ----------------------
     lookup = parse_lookup(lookup_file)
@@ -515,6 +533,7 @@ def main() -> None:
         "project_slug": project_slug,
         "project_id": project["id"],
         "project_title": title,
+        "changelog_body": changelog_body,
         "entries": [],
     }
 
@@ -531,7 +550,6 @@ def main() -> None:
         ver_num, prev = resolve_version_number(
             key, row, project_versions, bump, version_override
         )
-        changelog = build_changelog(ver_num, prev, bump, changelog_body)
 
         zip_name = "".join(word.capitalize() for word in project_slug.split("-"))
         file_name = f"{zip_name}-[v{ver_num}].zip"
@@ -557,7 +575,6 @@ def main() -> None:
                 "key": key,
                 "version_number": ver_num,
                 "previous_version": prev,
-                "changelog": changelog,
                 "file": file_name,
                 "game_versions": row["game_versions"],
             }
