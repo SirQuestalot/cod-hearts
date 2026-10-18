@@ -2,7 +2,7 @@
 """
 Local validation of a resource-pack build artifact directory.
 
-Checks metadata.json shape and every referenced zip. Does not call Modrinth
+Checks metadata.json shape (including shared changelog_body) and every referenced zip. Does not call Modrinth
 and does not upload anything.
 
 Used by:
@@ -68,6 +68,13 @@ def validate_artifact(dist_dir: str | Path) -> list[str]:
             "metadata must include a non-empty project_slug and/or project_title"
         )
 
+    changelog_body = meta.get("changelog_body")
+    if not isinstance(changelog_body, str) or not changelog_body.strip():
+        errors.append(
+            "metadata.changelog_body must be a non-empty string "
+            "(Unreleased section from CHANGELOG.md)"
+        )
+
     entries = meta.get("entries")
     if not isinstance(entries, list) or not entries:
         errors.append("metadata.entries must be a non-empty array")
@@ -108,13 +115,6 @@ def validate_artifact(dist_dir: str | Path) -> list[str]:
                 )
             else:
                 seen_versions[ver_s] = str(key_label)
-
-        changelog = entry.get("changelog")
-        if not isinstance(changelog, str) or not changelog.strip():
-            errors.append(
-                f"{prefix} ({key_label}): changelog must be a non-empty string "
-                "(after trimming leading/trailing whitespace)"
-            )
 
         game_versions = entry.get("game_versions")
         if not isinstance(game_versions, list) or not game_versions:
