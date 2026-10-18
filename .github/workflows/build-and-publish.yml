@@ -157,7 +157,7 @@ env:
 # build: validate inputs → github meta → build script (includes local
 #        artifact validation) → upload artifact
 # Changelog body comes from CHANGELOG.md ## [Unreleased] (not an input).
-# publish (optional): download → attach version headings → validate → identity → create
+# publish (optional): download → validate → identity → create
 # =============================================================================
 jobs:
   build:
@@ -539,7 +539,7 @@ jobs:
       #   - render template placeholders
       #   - zip packs
       #   - write metadata.json
-      # metadata includes changelog_body (Unreleased) plus entries with version_number, game_versions, file
+      # metadata includes changelog_body plus entries with version_number, game_versions, file
       # name, etc., so the publish job can upload without rebuilding.
       #
       # Environment variables are the script’s only configuration interface.
