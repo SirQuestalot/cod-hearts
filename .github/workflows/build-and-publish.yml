@@ -102,12 +102,6 @@ on:
         type: boolean
         default: true
 
-      # Text stored in metadata.json as the changelog body (with auto header)
-      changelog:
-        description: Changelog body (diff notes)
-        type: string
-        required: true
-
       # When true, publish job runs after a successful build.
       publish:
         description: Publish to Modrinth
@@ -153,6 +147,7 @@ env:
   OUT_DIR: build/dist
   PACK_ICON: core/pack.png
   LICENSE_FILE: LICENSE.txt
+  CHANGELOG_FILE: CHANGELOG.md
   # where zips + metadata.json are written on the VM.
   # upload-artifact packs this folder for the workflow run.
 
@@ -161,7 +156,8 @@ env:
 # -----------------------------------------------------------------------------
 # build: validate inputs → github meta → build script (includes local
 #        artifact validation) → upload artifact
-# publish (optional): download artifact → local re-validate → identity → create
+# Changelog body comes from CHANGELOG.md ## [Unreleased] (not an input).
+# publish (optional): download → attach version headings → validate → identity → create
 # =============================================================================
 jobs:
   build:
@@ -200,7 +196,6 @@ jobs:
           MC_VERSION_KEY_RANGE: ${{ inputs.mc_version_key_range }}
           BUMP: ${{ inputs.bump }}
           VERSION_OVERRIDE: ${{ inputs.version_override }}
-          CHANGELOG: ${{ inputs.changelog }}
         run: |
           # -e: exit if any command fails
           # -u: exit if we reference an unset variable
@@ -241,9 +236,8 @@ jobs:
             fi
           fi
 
-          # verifies changelog input is not whitespace-only values or empty API triggers
-          if [ -z "${CHANGELOG// }" ]; then
-            echo "Error: changelog is required"
+          if [ ! -f "$CHANGELOG_FILE" ]; then
+            echo "Error: $CHANGELOG_FILE not found"
             exit 1
           fi
 
@@ -545,7 +539,7 @@ jobs:
       #   - render template placeholders
       #   - zip packs
       #   - write metadata.json
-      # metadata entries include version_number, game_versions, changelog, file
+      # metadata includes changelog_body (Unreleased) plus entries with version_number, game_versions, file
       # name, etc., so the publish job can upload without rebuilding.
       #
       # Environment variables are the script’s only configuration interface.
@@ -556,7 +550,7 @@ jobs:
           BUMP: ${{ inputs.bump }}
           VERSION_OVERRIDE: ${{ inputs.version_override }}
           INCLUDE_MODS: ${{ inputs.include_mods }}
-          CHANGELOG: ${{ inputs.changelog }}
+          # CHANGELOG_FILE from job-level env; Unreleased section read by the script
           # From previous steps:
           DESCRIPTION: ${{ steps.github_meta.outputs.description }}
           LICENSE: ${{ steps.github_meta.outputs.license }}
