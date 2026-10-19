@@ -14,6 +14,10 @@
 # =============================================================================
 name: Build and Publish
 
+concurrency:
+  group: cod-hearts-automation
+  cancel-in-progress: false
+
 # run-name examples:
 #   single | 26.3 | patch | publish
 #   single | 1.6.x-1.8.x | manual (1.0.2) | no publish
@@ -32,10 +36,6 @@ run-name: >-
   }} | ${{ 
     inputs.publish && 'publish' || 'no publish' 
   }}
-
-concurrency:
-  group: cod-hearts-automation
-  cancel-in-progress: false
 
 # =============================================================================
 # Only workflow_dispatch: a human (or API call) starts it from the Actions UI.
@@ -146,6 +146,7 @@ env:
       github.run_id 
     }}
   PUBLISH_SCRIPT: .github/scripts/publish_to_modrinth.py
+  CHANGELOG_SCRIPT: .github/scripts/update_changelog.py
   MODRINTH_API: https://api.modrinth.com/v2
   GITHUB_API: https://api.github.com
   OUT_DIR: build/dist
@@ -161,7 +162,7 @@ env:
 # build: validate inputs → github meta → build script (includes local
 #        artifact validation) → upload artifact
 # Changelog body comes from CHANGELOG.md ## [Unreleased] (not an input).
-# publish (optional): download → validate → identity → create
+# publish (optional): download → validate → identity → create (shared changelog_body)
 # =============================================================================
 jobs:
   build:
@@ -612,3 +613,49 @@ jobs:
             exit 1
           fi
           python3 "$PUBLISH_SCRIPT"
+
+  # ---------------------------------------------------------------------------
+  # Record successful publish in CHANGELOG.md (sequence section + clear Unreleased)
+  # ---------------------------------------------------------------------------
+  changelog:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download build artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: dist
+
+      - name: Promote Unreleased into CHANGELOG.md
+        env:
+          CHANGELOG_FILE: ${{ env.CHANGELOG_FILE }}
+          DIST_DIR: dist
+        run: |
+          set -euo pipefail
+          if [ ! -f "$CHANGELOG_SCRIPT" ]; then
+            echo "Error: $CHANGELOG_SCRIPT not found"
+            exit 1
+          fi
+          python3 "$CHANGELOG_SCRIPT" promote
+
+      - name: Commit and push CHANGELOG.md
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md
+          if git diff --staged --quiet; then
+            echo "No CHANGELOG.md changes to commit"
+            exit 0
+          fi
+          git commit -m "Update CHANGELOG.md"
+          git push
