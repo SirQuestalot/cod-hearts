@@ -31,6 +31,7 @@ if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
 
 from validate_artifact import validate_artifact
+from update_changelog import extract_unreleased
 
 
 # =============================================================================
@@ -358,49 +359,6 @@ def resolve_version_number(key: str, row, project_versions, bump: str, version_o
         return f"{mj}.{mi + 1}.0", prev_num
     return f"{mj}.{mi}.{pa + 1}", prev_num
 
-
-def extract_unreleased(changelog_path: Path) -> str:
-    """
-    Return the body under ## [Unreleased] in a Keep a Changelog file.
-
-    Takes lines after the Unreleased heading until the next version-style
-    heading (## [ ... ]) or end of file. Fails if the section is missing
-    or only whitespace.
-    """
-    if not changelog_path.is_file():
-        raise SystemExit(f"CHANGELOG file not found: {changelog_path}")
-
-    text = changelog_path.read_text(encoding="utf-8")
-    lines = text.splitlines()
-
-    start = None
-    for i, line in enumerate(lines):
-        # Allow optional extra spaces: ## [Unreleased]
-        if re.match(r"^##\s+\[Unreleased\]\s*$", line, flags=re.IGNORECASE):
-            start = i + 1
-            break
-
-    if start is None:
-        raise SystemExit(
-            f"No ## [Unreleased] section found in {changelog_path}"
-        )
-
-    body_lines: list[str] = []
-    for line in lines[start:]:
-        # Next KaC version heading ends Unreleased (e.g. ## [1.2.3] - 2026-01-01)
-        if re.match(r"^##\s+\[.+\]", line) and not re.match(
-            r"^##\s+\[Unreleased\]\s*$", line, flags=re.IGNORECASE
-        ):
-            break
-        body_lines.append(line)
-
-    body = "\n".join(body_lines).strip()
-    if not body:
-        raise SystemExit(
-            f"## [Unreleased] in {changelog_path} is empty — "
-            "add change notes before building"
-        )
-    return body
 
 
 # =============================================================================
