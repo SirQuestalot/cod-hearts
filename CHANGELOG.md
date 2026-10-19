@@ -18,9 +18,5 @@ These section headings are used under each release.<br>A heading is only include
 
 ## [Unreleased]
 
-## [1] - 2026-10-19
-
-- [97.0.1]
-
 ### Deprecated
 - test
