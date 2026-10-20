@@ -11,6 +11,7 @@
 #   .github/scripts/build_artifact.py
 #   .github/scripts/validate_artifact.py
 #   .github/scripts/publish_to_modrinth.py
+#   .github/scripts/update_changelog.py
 # =============================================================================
 name: Build and Publish
 
@@ -153,6 +154,10 @@ env:
   PACK_ICON: core/pack.png
   LICENSE_FILE: LICENSE.txt
   CHANGELOG_FILE: CHANGELOG.md
+  # Full URL used in Modrinth changelog footer (edit path/branch here if needed)
+  CHANGELOG_URL: https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md
+  CHANGELOG_FOOTER_LABEL: Full project changelog
+  PROJECT_TYPE: resourcepack
   # where zips + metadata.json are written on the VM.
   # upload-artifact packs this folder for the workflow run.
 
@@ -590,6 +595,11 @@ jobs:
     if: ${{ inputs.publish }}
     runs-on: ubuntu-latest
     environment: modrinth_publish
+    outputs:
+      entry_n: ${{ steps.publish_versions.outputs.entry_n }}
+      changelog_date: ${{ steps.publish_versions.outputs.changelog_date }}
+      versions_json: ${{ steps.publish_versions.outputs.versions_json }}
+      project_slug: ${{ steps.publish_versions.outputs.project_slug }}
 
     steps:
       - name: Checkout repository
@@ -602,10 +612,14 @@ jobs:
           path: dist
 
       - name: Publish versions to Modrinth
+        id: publish_versions
         env:
           MODRINTH_TOKEN: ${{ secrets.MODRINTH_VERSION_CREATE_TOKEN }}
           MODRINTH_API: ${{ env.MODRINTH_API }}
           DIST_DIR: dist
+          CHANGELOG_FILE: ${{ env.CHANGELOG_FILE }}
+          CHANGELOG_URL: ${{ env.CHANGELOG_URL }}
+          CHANGELOG_FOOTER_LABEL: ${{ env.CHANGELOG_FOOTER_LABEL }}
         run: |
           set -euo pipefail
           if [ -z "${MODRINTH_TOKEN:-}" ]; then
@@ -639,6 +653,11 @@ jobs:
         env:
           CHANGELOG_FILE: ${{ env.CHANGELOG_FILE }}
           DIST_DIR: dist
+          CHANGELOG_ENTRY: ${{ needs.publish.outputs.entry_n }}
+          CHANGELOG_DATE: ${{ needs.publish.outputs.changelog_date }}
+          CHANGELOG_VERSIONS_JSON: ${{ needs.publish.outputs.versions_json }}
+          PROJECT_SLUG: ${{ needs.publish.outputs.project_slug }}
+          PROJECT_TYPE: ${{ env.PROJECT_TYPE }}
         run: |
           set -euo pipefail
           if [ ! -f "$CHANGELOG_SCRIPT" ]; then
