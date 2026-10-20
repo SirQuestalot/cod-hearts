@@ -150,7 +150,7 @@ def promote_changelog(
     preamble = lines[:urel_i]
     rest = lines[after_i:]
 
-    versions_line = "- [" + ", ".join(version_items) + "]"
+    versions_line = "- " + ", ".join(version_items)
     section_lines = [
         f"## [{seq}] - {day}",
         "",
