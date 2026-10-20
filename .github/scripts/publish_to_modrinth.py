@@ -5,12 +5,16 @@ Publish resource-pack zips from a build artifact's metadata.json to Modrinth.
 Flow:
   1. Local validate_artifact(DIST_DIR)
   2. Read-only Modrinth identity checks (token + project id vs slug)
-  3. Create each version (oldest first) with shared changelog_body; retries; fail-fast
+  3. Changelog helpers: entry n, UTC date, Modrinth body + footer
+  4. Create each version (oldest first); collect ids; write GITHUB_OUTPUT
 
 Env:
-  MODRINTH_API   - API base (default https://api.modrinth.com/v2)
-  MODRINTH_TOKEN - PAT with VERSION_CREATE
-  DIST_DIR       - folder containing metadata.json and the zip files (default: dist)
+  MODRINTH_API      - API base (default https://api.modrinth.com/v2)
+  MODRINTH_TOKEN    - PAT with VERSION_CREATE
+  DIST_DIR          - folder with metadata.json and zips (default: dist)
+  CHANGELOG_FILE    - path to CHANGELOG.md (default: CHANGELOG.md)
+  CHANGELOG_URL     - full URL for footer link to CHANGELOG.md
+  CHANGELOG_FOOTER_LABEL - optional link text (default in update_changelog)
 """
 
 from __future__ import annotations
@@ -21,6 +25,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 
 _SCRIPT_DIR = Path(__file__).resolve().parent
@@ -28,6 +33,7 @@ if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
 
 from validate_artifact import validate_artifact  # noqa: E402
+from update_changelog import format_modrinth_changelog, next_sequence  # noqa: E402
 
 MAX_ATTEMPTS = 5
 REQUEST_TIMEOUT_SEC = 240
@@ -156,6 +162,24 @@ def verify_project_identity(
         )
 
 
+
+def write_github_output(name: str, value: str) -> None:
+    """Append a workflow step output (supports multiline via heredoc)."""
+    path = os.environ.get("GITHUB_OUTPUT")
+    if not path:
+        print(f"GITHUB_OUTPUT not set; skip output {name}")
+        return
+    with open(path, "a", encoding="utf-8") as fh:
+        if "\n" in value:
+            fh.write(f"{name}<<OUTPUT_END\n")
+            fh.write(value)
+            if not value.endswith("\n"):
+                fh.write("\n")
+            fh.write("OUTPUT_END\n")
+        else:
+            fh.write(f"{name}={value}\n")
+
+
 def main() -> None:
     api = env("MODRINTH_API", "https://api.modrinth.com/v2").rstrip("/")
     token = env("MODRINTH_TOKEN")
@@ -177,11 +201,26 @@ def main() -> None:
     body = meta.get("changelog_body")
     if not isinstance(body, str) or not body.strip():
         raise SystemExit("metadata.changelog_body is missing or empty")
-    changelog = body.strip()
+    body = body.strip()
 
     entries = meta.get("entries") or []
     if not entries:
         raise SystemExit("metadata.json has no entries to publish")
+
+    changelog_file = Path(os.environ.get("CHANGELOG_FILE", "CHANGELOG.md"))
+    changelog_url = os.environ.get("CHANGELOG_URL", "").strip()
+    if not changelog_url:
+        raise SystemExit(
+            "CHANGELOG_URL is not set "
+            "(workflow should set the full GitHub URL to CHANGELOG.md)"
+        )
+    if not changelog_file.is_file():
+        raise SystemExit(f"CHANGELOG file not found: {changelog_file}")
+
+    entry_n = next_sequence(changelog_file.read_text(encoding="utf-8"))
+    day = datetime.now(timezone.utc).date().isoformat()
+    changelog = format_modrinth_changelog(body, entry_n, day, changelog_url)
+    print(f"Changelog entry n={entry_n} date={day}")
 
     project_id = meta["project_id"]
     title = meta.get("project_title") or meta.get("project_slug") or project_id
@@ -193,6 +232,7 @@ def main() -> None:
     print(f"Modrinth identity OK for project {slug!r} ({project_id}).")
 
     succeeded: list[str] = []
+    published_by_number: dict[str, str] = {}
 
     for entry in reversed(entries):
         key = entry["key"]
@@ -266,8 +306,26 @@ def main() -> None:
         vid = result.get("id", "?")
         print(f"  OK version id={vid} number={result.get('version_number')}")
         succeeded.append(f"{key} → {ver_num} (id={vid})")
+        if isinstance(vid, str) and vid.strip() and vid != "?":
+            published_by_number[str(ver_num).strip()] = vid.strip()
 
     print(f"\nPublished {len(succeeded)} version(s).")
+
+    versions_out = []
+    for entry in entries:
+        ver_num = str(entry["version_number"]).strip()
+        versions_out.append(
+            {
+                "version_number": ver_num,
+                "id": published_by_number.get(ver_num, ""),
+            }
+        )
+    versions_json = json.dumps(versions_out, separators=(",", ":"))
+    write_github_output("entry_n", str(entry_n))
+    write_github_output("changelog_date", day)
+    write_github_output("versions_json", versions_json)
+    write_github_output("project_slug", slug)
+    print(f"Wrote job outputs entry_n={entry_n} date={day} versions={len(versions_out)}")
 
 
 if __name__ == "__main__":
