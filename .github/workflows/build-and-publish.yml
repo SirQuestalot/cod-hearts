@@ -738,24 +738,37 @@ jobs:
           fi
           TAG="changelog${ENTRY}-${DATE}"
           TITLE="[${ENTRY}] - ${DATE}"
-          # gh treats asset args as globs; escape [ ] so names like CodHearts-[v97.0.1].zip work
+
           shopt -s nullglob
-          assets=()
-          for f in dist/*.zip; do
-            [ -f "$f" ] || continue
-            esc=${f//\[/\\[}
-            esc=${esc//\]/\\]}
-            assets+=("$esc")
-          done
-          if [ "${#assets[@]}" -eq 0 ]; then
+          zips=(dist/*.zip)
+          if [ "${#zips[@]}" -eq 0 ]; then
             echo "Error: no .zip files found under dist/ to attach"
             ls -la dist/ || true
             exit 1
           fi
+
           echo "Creating release tag=$TAG title=$TITLE target=$TARGET_SHA"
-          echo "Assets: ${assets[*]}"
           gh release create "$TAG" \
             --title "$TITLE" \
             --notes-file release-notes.md \
-            --target "$TARGET_SHA" \
-            "${assets[@]}"
+            --target "$TARGET_SHA"
+
+          # Upload each zip by path; asset name = basename (keeps [ ] in names).
+          # gh release create/upload treat paths as globs, which mangles [v...].
+          upload_url="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" --jq .upload_url)"
+          upload_url="${upload_url%%\{*}"
+
+          for f in "${zips[@]}"; do
+            [ -f "$f" ] || continue
+            name="$(basename "$f")"
+            name_enc="$(printf '%s' "$name" | jq -sRr @uri)"
+            echo "Uploading asset: $name"
+            curl -sS -f -X POST \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "Content-Type: application/zip" \
+              --data-binary @"$f" \
+              "${upload_url}?name=${name_enc}" \
+              -o "/tmp/upload-${name}.json"
+            echo "  OK $name"
+          done
