@@ -636,6 +636,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    outputs:
+      sha: ${{ steps.commit_changelog.outputs.sha }}
 
     steps:
       - name: Checkout repository
@@ -667,6 +669,7 @@ jobs:
           python3 "$CHANGELOG_SCRIPT" promote
 
       - name: Commit and push CHANGELOG.md
+        id: commit_changelog
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
@@ -678,3 +681,70 @@ jobs:
           fi
           git commit -m "Update CHANGELOG.md"
           git push
+
+
+  # ---------------------------------------------------------------------------
+  # GitHub Release (tag + notes matching changelog section + pack zips)
+  # ---------------------------------------------------------------------------
+  release:
+    needs:
+      - publish
+      - changelog
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.changelog.outputs.sha }}
+
+      - name: Download build artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: dist
+
+      - name: Build release notes
+        env:
+          DIST_DIR: dist
+          CHANGELOG_ENTRY: ${{ needs.publish.outputs.entry_n }}
+          CHANGELOG_DATE: ${{ needs.publish.outputs.changelog_date }}
+          CHANGELOG_VERSIONS_JSON: ${{ needs.publish.outputs.versions_json }}
+          PROJECT_SLUG: ${{ needs.publish.outputs.project_slug }}
+          PROJECT_TYPE: ${{ env.PROJECT_TYPE }}
+        run: |
+          set -euo pipefail
+          if [ ! -f "$CHANGELOG_SCRIPT" ]; then
+            echo "Error: $CHANGELOG_SCRIPT not found"
+            exit 1
+          fi
+          python3 "$CHANGELOG_SCRIPT" release-notes > release-notes.md
+          echo "---- release notes ----"
+          cat release-notes.md
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ENTRY: ${{ needs.publish.outputs.entry_n }}
+          DATE: ${{ needs.publish.outputs.changelog_date }}
+          TARGET_SHA: ${{ needs.changelog.outputs.sha }}
+        run: |
+          set -euo pipefail
+          TAG="changelog${ENTRY}-${DATE}"
+          TITLE="[${ENTRY}] - ${DATE}"
+          shopt -s nullglob
+          zips=(dist/*.zip)
+          if [ "${#zips[@]}" -eq 0 ]; then
+            echo "Error: no .zip files found under dist/ to attach"
+            ls -la dist/ || true
+            exit 1
+          fi
+          echo "Creating release tag=$TAG title=$TITLE target=$TARGET_SHA"
+          echo "Assets: ${zips[*]}"
+          gh release create "$TAG" \
+            --title "$TITLE" \
+            --notes-file release-notes.md \
+            --target "$TARGET_SHA" \
+            "${zips[@]}"
