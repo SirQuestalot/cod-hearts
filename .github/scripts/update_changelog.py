@@ -6,11 +6,12 @@ Used by:
   - build_artifact.py       → extract_unreleased()
   - publish_to_modrinth.py  → next_sequence(), format_modrinth_changelog()
   - workflow job changelog  → promote (rewrite file only; git is in the workflow)
+  - workflow job release    → release-notes (stdout body for GitHub Release)
 
-GitHub promote section shape:
+GitHub section / Release body shape:
   ## [n] - YYYY-MM-DD
 
-  - [[1.2.3](modrinth-url), [1.2.4](modrinth-url)]
+  - [1.2.3](modrinth-url), [1.2.4](modrinth-url)
 
   <body>
 
@@ -106,6 +107,43 @@ def format_modrinth_changelog(
     return body + "\n\n" + footer
 
 
+
+def format_github_section(
+    body: str,
+    version_items: list[str],
+    day: str,
+    seq: int,
+) -> str:
+    """
+    Exact GitHub changelog section / Release notes body.
+
+    Versions line has no outer group brackets:
+      - [1.2.3](url), [1.2.4](url)
+    """
+    body = body.strip()
+    if not body:
+        raise SystemExit("format_github_section: body is empty")
+    if not version_items:
+        raise SystemExit("format_github_section: versions list is empty")
+    if seq < 1:
+        raise SystemExit(f"format_github_section: invalid sequence number {seq}")
+    if not day.strip():
+        raise SystemExit("format_github_section: day is empty")
+
+    versions_line = "- " + ", ".join(version_items)
+    parts = [
+        f"## [{seq}] - {day.strip()}",
+        "",
+        versions_line,
+        "",
+    ]
+    parts.extend(body.splitlines())
+    out = chr(10).join(parts)
+    if not out.endswith(chr(10)):
+        out += chr(10)
+    return out
+
+
 def _split_changelog(lines: list[str]) -> tuple[list[str], int, int]:
     start = None
     for i, line in enumerate(lines):
@@ -150,17 +188,7 @@ def promote_changelog(
     preamble = lines[:urel_i]
     rest = lines[after_i:]
 
-    versions_line = "- " + ", ".join(version_items)
-    section_lines = [
-        f"## [{seq}] - {day}",
-        "",
-        versions_line,
-        "",
-    ]
-    section_lines.extend(body.splitlines())
-    while section_lines and section_lines[-1] == "":
-        section_lines.pop()
-    section_lines.append("")
+    section_lines = format_github_section(body, version_items, day, seq).splitlines()
 
     out_lines: list[str] = []
     out_lines.extend(preamble)
@@ -189,36 +217,7 @@ def _body_from_metadata(meta_path: Path) -> str:
     return body.strip()
 
 
-def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(description="Update CHANGELOG.md after publish")
-    parser.add_argument(
-        "command",
-        choices=["promote"],
-        help="promote: rewrite CHANGELOG.md from artifact metadata + publish outputs",
-    )
-    args = parser.parse_args(argv)
-
-    if args.command != "promote":
-        raise SystemExit(f"unknown command: {args.command}")
-
-    changelog_path = Path(os.environ.get("CHANGELOG_FILE", "CHANGELOG.md"))
-    dist_dir = Path(os.environ.get("DIST_DIR", "dist"))
-    meta_path = Path(os.environ.get("METADATA_JSON", str(dist_dir / "metadata.json")))
-
-    day = os.environ.get("CHANGELOG_DATE", "").strip()
-    if not day:
-        raise SystemExit("CHANGELOG_DATE is required (UTC YYYY-MM-DD from publish job)")
-
-    entry_raw = os.environ.get("CHANGELOG_ENTRY", "").strip()
-    if not entry_raw:
-        raise SystemExit("CHANGELOG_ENTRY is required (sequence n from publish job)")
-    try:
-        seq = int(entry_raw)
-    except ValueError as e:
-        raise SystemExit(f"CHANGELOG_ENTRY must be an integer, got {entry_raw!r}") from e
-
-    body = _body_from_metadata(meta_path)
-
+def _version_items_from_env(meta_path: Path) -> list[str]:
     versions_raw = os.environ.get("CHANGELOG_VERSIONS_JSON", "").strip()
     if not versions_raw:
         raise SystemExit("CHANGELOG_VERSIONS_JSON is required")
@@ -251,10 +250,54 @@ def main(argv: list[str] | None = None) -> None:
             version_items.append(f"[{ver}]({url})")
         else:
             version_items.append(ver)
+    return version_items
 
-    used = promote_changelog(changelog_path, body, version_items, day, seq)
-    print(f"Promoted CHANGELOG.md section ## [{used}] - {day}")
-    print(f"Versions: {version_items}")
+
+def _entry_and_day() -> tuple[int, str]:
+    day = os.environ.get("CHANGELOG_DATE", "").strip()
+    if not day:
+        raise SystemExit("CHANGELOG_DATE is required (UTC YYYY-MM-DD from publish job)")
+    entry_raw = os.environ.get("CHANGELOG_ENTRY", "").strip()
+    if not entry_raw:
+        raise SystemExit("CHANGELOG_ENTRY is required (sequence n from publish job)")
+    try:
+        seq = int(entry_raw)
+    except ValueError as e:
+        raise SystemExit(f"CHANGELOG_ENTRY must be an integer, got {entry_raw!r}") from e
+    return seq, day
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description="CHANGELOG.md / release notes helpers")
+    parser.add_argument(
+        "command",
+        choices=["promote", "release-notes"],
+        help=(
+            "promote: rewrite CHANGELOG.md; "
+            "release-notes: print GitHub section body to stdout"
+        ),
+    )
+    args = parser.parse_args(argv)
+
+    dist_dir = Path(os.environ.get("DIST_DIR", "dist"))
+    meta_path = Path(os.environ.get("METADATA_JSON", str(dist_dir / "metadata.json")))
+    seq, day = _entry_and_day()
+    body = _body_from_metadata(meta_path)
+    version_items = _version_items_from_env(meta_path)
+
+    if args.command == "release-notes":
+        text_out = format_github_section(body, version_items, day, seq)
+        print(text_out, end="" if text_out.endswith(chr(10)) else chr(10))
+        return
+
+    if args.command == "promote":
+        changelog_path = Path(os.environ.get("CHANGELOG_FILE", "CHANGELOG.md"))
+        used = promote_changelog(changelog_path, body, version_items, day, seq)
+        print(f"Promoted CHANGELOG.md section ## [{used}] - {day}")
+        print(f"Versions: {version_items}")
+        return
+
+    raise SystemExit(f"unknown command: {args.command}")
 
 
 if __name__ == "__main__":
