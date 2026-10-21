@@ -677,11 +677,11 @@ jobs:
           git add CHANGELOG.md
           if git diff --staged --quiet; then
             echo "No CHANGELOG.md changes to commit"
-            exit 0
+          else
+            git commit -m "Update CHANGELOG.md"
+            git push
           fi
-          git commit -m "Update CHANGELOG.md"
-          git push
-
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
   # ---------------------------------------------------------------------------
   # GitHub Release (tag + notes matching changelog section + pack zips)
@@ -732,19 +732,30 @@ jobs:
           TARGET_SHA: ${{ needs.changelog.outputs.sha }}
         run: |
           set -euo pipefail
+          if [ -z "${TARGET_SHA:-}" ]; then
+            echo "Error: TARGET_SHA (changelog commit) is empty"
+            exit 1
+          fi
           TAG="changelog${ENTRY}-${DATE}"
           TITLE="[${ENTRY}] - ${DATE}"
+          # gh treats asset args as globs; escape [ ] so names like CodHearts-[v97.0.1].zip work
           shopt -s nullglob
-          zips=(dist/*.zip)
-          if [ "${#zips[@]}" -eq 0 ]; then
+          assets=()
+          for f in dist/*.zip; do
+            [ -f "$f" ] || continue
+            esc=${f//\[/\\[}
+            esc=${esc//\]/\\]}
+            assets+=("$esc")
+          done
+          if [ "${#assets[@]}" -eq 0 ]; then
             echo "Error: no .zip files found under dist/ to attach"
             ls -la dist/ || true
             exit 1
           fi
           echo "Creating release tag=$TAG title=$TITLE target=$TARGET_SHA"
-          echo "Assets: ${zips[*]}"
+          echo "Assets: ${assets[*]}"
           gh release create "$TAG" \
             --title "$TITLE" \
             --notes-file release-notes.md \
             --target "$TARGET_SHA" \
-            "${zips[@]}"
+            "${assets[@]}"
