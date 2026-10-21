@@ -18,5 +18,9 @@ These section headings are used under each release.<br>A heading is only include
 
 ## [Unreleased]
 
+## [1] - 2026-10-21
+
+- [97.0.1](https://modrinth.com/resourcepack/cod-hearts/version/NAWvugUG)
+
 ### Deprecated
 - test
