@@ -113,12 +113,23 @@ def format_github_section(
     version_items: list[str],
     day: str,
     seq: int,
+    *,
+    include_header: bool = True,
 ) -> str:
     """
-    Exact GitHub changelog section / Release notes body.
+    GitHub changelog section text.
 
-    Versions line has no outer group brackets:
-      - [1.2.3](url), [1.2.4](url)
+    With include_header=True (CHANGELOG.md promote):
+      ## [n] - YYYY-MM-DD
+
+      - [1.2.3](url), ...
+
+      <body>
+
+    With include_header=False (Release notes; title already has n/date):
+      - [1.2.3](url), ...
+
+      <body>
     """
     body = body.strip()
     if not body:
@@ -131,12 +142,12 @@ def format_github_section(
         raise SystemExit("format_github_section: day is empty")
 
     versions_line = "- " + ", ".join(version_items)
-    parts = [
-        f"## [{seq}] - {day.strip()}",
-        "",
-        versions_line,
-        "",
-    ]
+    parts: list[str] = []
+    if include_header:
+        parts.append(f"## [{seq}] - {day.strip()}")
+        parts.append("")
+    parts.append(versions_line)
+    parts.append("")
     parts.extend(body.splitlines())
     out = chr(10).join(parts)
     if not out.endswith(chr(10)):
@@ -286,7 +297,10 @@ def main(argv: list[str] | None = None) -> None:
     version_items = _version_items_from_env(meta_path)
 
     if args.command == "release-notes":
-        text_out = format_github_section(body, version_items, day, seq)
+        # Title already carries [n] - date; body is versions line + notes only
+        text_out = format_github_section(
+            body, version_items, day, seq, include_header=False
+        )
         print(text_out, end="" if text_out.endswith(chr(10)) else chr(10))
         return
 
