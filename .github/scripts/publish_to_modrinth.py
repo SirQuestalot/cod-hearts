@@ -301,7 +301,9 @@ def main() -> None:
                         project_type=os.environ.get("PROJECT_TYPE", "resourcepack")
                         .strip()
                         or "resourcepack",
-                    )
+                        outcome="failure",
+                    ),
+                    outcome="failure",
                 )
             if isinstance(last_error, urllib.error.HTTPError):
                 raise SystemExit(
@@ -342,6 +344,21 @@ def main() -> None:
     write_github_output("versions_json", versions_json)
     write_github_output("project_slug", slug)
     print(f"Wrote job outputs entry_n={entry_n} date={day} versions={len(versions_out)}")
+
+    # Inventory after successful Modrinth creates (changelog/release may still follow)
+    emit_residuals(
+        format_residuals(
+            stage="publish",
+            versions=versions_out,
+            entry_n=entry_n,
+            day=day,
+            slug=slug,
+            project_type=os.environ.get("PROJECT_TYPE", "resourcepack").strip()
+            or "resourcepack",
+            outcome="success",
+        ),
+        outcome="success",
+    )
 
 
 if __name__ == "__main__":
