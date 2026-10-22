@@ -740,6 +740,7 @@ jobs:
           cat release-notes.md
 
       - name: Create GitHub Release
+        id: create_release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ENTRY: ${{ needs.publish.outputs.entry_n }}
@@ -768,25 +769,36 @@ jobs:
             --notes-file release-notes.md \
             --target "$TARGET_SHA"
 
-          # Upload each zip by path; asset name = basename (keeps [ ] in names).
-          # gh release create/upload treat paths as globs, which mangles [v...].
           upload_url="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" --jq .upload_url)"
           upload_url="${upload_url%%\{*}"
+          html_url="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" --jq .html_url)"
 
           for f in "${zips[@]}"; do
             [ -f "$f" ] || continue
             name="$(basename "$f")"
             name_enc="$(printf '%s' "$name" | jq -sRr @uri)"
-            echo "Uploading asset: $name"
+            echo "Uploading asset basename=${name}"
             curl -sS -f -X POST \
               -H "Authorization: Bearer ${GH_TOKEN}" \
               -H "Accept: application/vnd.github+json" \
               -H "Content-Type: application/zip" \
               --data-binary @"$f" \
               "${upload_url}?name=${name_enc}" \
-              -o "/tmp/upload-${name}.json"
+              -o /tmp/upload-asset.json
+            returned="$(jq -r '.name // empty' /tmp/upload-asset.json)"
+            echo "  API response name=${returned}"
+            if [ "$returned" != "$name" ]; then
+              echo "Error: asset name mismatch (exact basename required)"
+              echo "  expected: $name"
+              echo "  got:      $returned"
+              cat /tmp/upload-asset.json || true
+              exit 1
+            fi
             echo "  OK $name"
           done
+
+          echo "release_tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "release_url=$html_url" >> "$GITHUB_OUTPUT"
 
       - name: On failure — residual cleanup guidance
         if: failure()
@@ -798,20 +810,24 @@ jobs:
           CHANGELOG_DATE: ${{ needs.publish.outputs.changelog_date }}
           PROJECT_SLUG: ${{ needs.publish.outputs.project_slug }}
           PROJECT_TYPE: ${{ env.PROJECT_TYPE }}
+          RELEASE_TAG: ${{ steps.create_release.outputs.release_tag }}
+          RELEASE_URL: ${{ steps.create_release.outputs.release_url }}
         run: |
           set -euo pipefail
           python3 "$RESIDUALS_SCRIPT"
 
-      - name: On success — run inventory (optional undo guide)
+      - name: On success — run inventory
         if: success()
         env:
-          RESIDUAL_STAGE: complete
+          RESIDUAL_STAGE: release
           RESIDUAL_OUTCOME: success
           CHANGELOG_VERSIONS_JSON: ${{ needs.publish.outputs.versions_json }}
           CHANGELOG_ENTRY: ${{ needs.publish.outputs.entry_n }}
           CHANGELOG_DATE: ${{ needs.publish.outputs.changelog_date }}
           PROJECT_SLUG: ${{ needs.publish.outputs.project_slug }}
           PROJECT_TYPE: ${{ env.PROJECT_TYPE }}
+          RELEASE_TAG: ${{ steps.create_release.outputs.release_tag }}
+          RELEASE_URL: ${{ steps.create_release.outputs.release_url }}
         run: |
           set -euo pipefail
           python3 "$RESIDUALS_SCRIPT"
