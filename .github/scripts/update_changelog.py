@@ -11,7 +11,7 @@ Used by:
 GitHub section / Release body shape:
   ## [n] - YYYY-MM-DD
 
-  - [1.2.3](modrinth-url), [1.2.4](modrinth-url)
+  - [1.2.3](modrinth-url)(26.3) [1.2.4](modrinth-url)(26.2)
 
   <body>
 
@@ -122,12 +122,12 @@ def format_github_section(
     With include_header=True (CHANGELOG.md promote):
       ## [n] - YYYY-MM-DD
 
-      - [1.2.3](url), ...
+      - [1.2.3](url)(26.3) [1.2.4](url)(26.2)
 
       <body>
 
     With include_header=False (Release notes; title already has n/date):
-      - [1.2.3](url), ...
+      - [1.2.3](url)(26.3) [1.2.4](url)(26.2)
 
       <body>
     """
@@ -141,7 +141,7 @@ def format_github_section(
     if not day.strip():
         raise SystemExit("format_github_section: day is empty")
 
-    versions_line = "- " + ", ".join(version_items)
+    versions_line = "- " + " ".join(version_items)
     parts: list[str] = []
     if include_header:
         parts.append(f"## [{seq}] - {day.strip()}")
@@ -253,14 +253,17 @@ def _version_items_from_env(meta_path: Path) -> list[str]:
             raise SystemExit("each versions_json item must be an object")
         ver = item.get("version_number")
         vid = item.get("id")
+        key = item.get("key")
         if not isinstance(ver, str) or not ver.strip():
             raise SystemExit("version_number missing in versions_json item")
         ver = ver.strip()
+        key_s = key.strip() if isinstance(key, str) else ""
+        suffix = f"({key_s})" if key_s else ""
         if isinstance(vid, str) and vid.strip() and vid.strip() != "?":
             url = f"https://modrinth.com/{project_type}/{slug}/version/{vid.strip()}"
-            version_items.append(f"[{ver}]({url})")
+            version_items.append(f"[{ver}]({url}){suffix}")
         else:
-            version_items.append(ver)
+            version_items.append(f"{ver}{suffix}")
     return version_items
 
 
