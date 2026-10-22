@@ -148,6 +148,7 @@ env:
     }}
   PUBLISH_SCRIPT: .github/scripts/publish_to_modrinth.py
   CHANGELOG_SCRIPT: .github/scripts/update_changelog.py
+  RESIDUALS_SCRIPT: .github/scripts/report_residuals.py
   MODRINTH_API: https://api.modrinth.com/v2
   GITHUB_API: https://api.github.com
   OUT_DIR: build/dist
@@ -683,6 +684,19 @@ jobs:
           fi
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
+      - name: On failure — residual cleanup guidance
+        if: failure()
+        env:
+          RESIDUAL_STAGE: changelog
+          CHANGELOG_VERSIONS_JSON: ${{ needs.publish.outputs.versions_json }}
+          CHANGELOG_ENTRY: ${{ needs.publish.outputs.entry_n }}
+          CHANGELOG_DATE: ${{ needs.publish.outputs.changelog_date }}
+          PROJECT_SLUG: ${{ needs.publish.outputs.project_slug }}
+          PROJECT_TYPE: ${{ env.PROJECT_TYPE }}
+        run: |
+          set -euo pipefail
+          python3 "$RESIDUALS_SCRIPT"
+
   # ---------------------------------------------------------------------------
   # GitHub Release (tag + notes matching changelog section + pack zips)
   # ---------------------------------------------------------------------------
@@ -772,3 +786,16 @@ jobs:
               -o "/tmp/upload-${name}.json"
             echo "  OK $name"
           done
+
+      - name: On failure — residual cleanup guidance
+        if: failure()
+        env:
+          RESIDUAL_STAGE: release
+          CHANGELOG_VERSIONS_JSON: ${{ needs.publish.outputs.versions_json }}
+          CHANGELOG_ENTRY: ${{ needs.publish.outputs.entry_n }}
+          CHANGELOG_DATE: ${{ needs.publish.outputs.changelog_date }}
+          PROJECT_SLUG: ${{ needs.publish.outputs.project_slug }}
+          PROJECT_TYPE: ${{ env.PROJECT_TYPE }}
+        run: |
+          set -euo pipefail
+          python3 "$RESIDUALS_SCRIPT"
