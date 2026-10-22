@@ -314,10 +314,12 @@ def main() -> None:
     versions_out = []
     for entry in entries:
         ver_num = str(entry["version_number"]).strip()
+        key = str(entry.get("key", "")).strip()
         versions_out.append(
             {
                 "version_number": ver_num,
                 "id": published_by_number.get(ver_num, ""),
+                "key": key,
             }
         )
     versions_json = json.dumps(versions_out, separators=(",", ":"))
