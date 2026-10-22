@@ -32,6 +32,7 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
 
+from report_residuals import emit_residuals, format_residuals  # noqa: E402
 from validate_artifact import validate_artifact  # noqa: E402
 from update_changelog import format_modrinth_changelog, next_sequence  # noqa: E402
 
@@ -232,6 +233,7 @@ def main() -> None:
     print(f"Modrinth identity OK for project {slug!r} ({project_id}).")
 
     succeeded: list[str] = []
+    succeeded_items: list[dict] = []
     published_by_number: dict[str, str] = {}
 
     for entry in reversed(entries):
@@ -288,13 +290,19 @@ def main() -> None:
                 time.sleep(wait)
 
         if last_error is not None or result is None:
-            if succeeded:
-                print(
-                    "Versions already created in this run "
-                    "(manual cleanup on Modrinth may be needed):"
+            if succeeded_items:
+                emit_residuals(
+                    format_residuals(
+                        stage="publish",
+                        versions=succeeded_items,
+                        entry_n=entry_n,
+                        day=day,
+                        slug=slug,
+                        project_type=os.environ.get("PROJECT_TYPE", "resourcepack")
+                        .strip()
+                        or "resourcepack",
+                    )
                 )
-                for line in succeeded:
-                    print(f"  - {line}")
             if isinstance(last_error, urllib.error.HTTPError):
                 raise SystemExit(
                     f"Modrinth HTTP {last_error.code} publishing {key!r}:\n{last_err_body}"
@@ -306,6 +314,12 @@ def main() -> None:
         vid = result.get("id", "?")
         print(f"  OK version id={vid} number={result.get('version_number')}")
         succeeded.append(f"{key} → {ver_num} (id={vid})")
+        item = {
+            "key": str(key).strip(),
+            "version_number": str(ver_num).strip(),
+            "id": vid if isinstance(vid, str) else "",
+        }
+        succeeded_items.append(item)
         if isinstance(vid, str) and vid.strip() and vid != "?":
             published_by_number[str(ver_num).strip()] = vid.strip()
 
