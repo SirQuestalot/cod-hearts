@@ -510,7 +510,7 @@ def main() -> None:
         )
 
         zip_name = "".join(word.capitalize() for word in project_slug.split("-"))
-        file_name = f"{zip_name}-[v{ver_num}].zip"
+        file_name = f"{zip_name}-v{ver_num}.zip"
         zip_path = out_dir / file_name
 
         use_mods = include_mods and row["pack_format"] is not None
