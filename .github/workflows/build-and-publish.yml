@@ -773,6 +773,10 @@ jobs:
           upload_url="${upload_url%%\{*}"
           html_url="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" --jq .html_url)"
 
+          # Record tag/URL before asset uploads so failure residuals still list them
+          echo "release_tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "release_url=$html_url" >> "$GITHUB_OUTPUT"
+
           for f in "${zips[@]}"; do
             [ -f "$f" ] || continue
             name="$(basename "$f")"
@@ -796,9 +800,6 @@ jobs:
             fi
             echo "  OK $name"
           done
-
-          echo "release_tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "release_url=$html_url" >> "$GITHUB_OUTPUT"
 
       - name: On failure — residual cleanup guidance
         if: failure()
