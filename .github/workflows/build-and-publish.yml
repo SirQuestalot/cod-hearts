@@ -595,7 +595,7 @@ jobs:
     needs: build
     if: ${{ inputs.publish }}
     runs-on: ubuntu-latest
-    environment: modrinth_publish
+    environment: get_approval
     outputs:
       entry_n: ${{ steps.publish_versions.outputs.entry_n }}
       changelog_date: ${{ steps.publish_versions.outputs.changelog_date }}
