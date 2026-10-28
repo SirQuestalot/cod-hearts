@@ -1,0 +1,214 @@
+# =============================================================================
+# Import Modrinth history as CHANGELOG entry 0 + GitHub Release (full mirror)
+# -----------------------------------------------------------------------------
+# prepare: anonymous Modrinth GETs, download zips, warnings → log/summary
+# commit:  environment get_approval → CHANGELOG append, release, attach assets
+# =============================================================================
+name: Import Modrinth History
+
+concurrency:
+  group: cod-hearts-automation
+  cancel-in-progress: false
+
+on:
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Replace existing changelog entry [0] / changelog0-* release if true
+        type: boolean
+        default: false
+
+env:
+  IMPORT_SCRIPT: .github/scripts/import_modrinth_history.py
+  RESIDUALS_SCRIPT: .github/scripts/report_residuals.py
+  MODRINTH_API: https://api.modrinth.com/v2
+  CHANGELOG_FILE: CHANGELOG.md
+  CHANGELOG_URL: https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md
+  PROJECT_TYPE: resourcepack
+  OUT_DIR: import-dist
+  ARTIFACT_NAME: import-modrinth-history-${{ github.run_id }}
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      imported_date: ${{ steps.prepare.outputs.imported_date }}
+      entry_count: ${{ steps.prepare.outputs.entry_count }}
+      version_numbers_json: ${{ steps.prepare.outputs.version_numbers_json }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Prepare import artifact
+        id: prepare
+        env:
+          PROJECT_SLUG: ${{ github.event.repository.name }}
+          PROJECT_TYPE: ${{ env.PROJECT_TYPE }}
+          MODRINTH_API: ${{ env.MODRINTH_API }}
+          CHANGELOG_FILE: ${{ env.CHANGELOG_FILE }}
+          OUT_DIR: ${{ env.OUT_DIR }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          set -euo pipefail
+          python3 "$IMPORT_SCRIPT" prepare
+
+      - name: Upload import artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: ${{ env.OUT_DIR }}/
+          if-no-files-found: error
+
+  commit:
+    needs: prepare
+    if: ${{ needs.prepare.outputs.entry_count != '' && needs.prepare.outputs.entry_count != '0' }}
+    runs-on: ubuntu-latest
+    environment: get_approval
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download import artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: ${{ env.OUT_DIR }}
+
+      - name: Show prepare summary (for approval review)
+        run: |
+          set -euo pipefail
+          if [ -f "${{ env.OUT_DIR }}/prepare_summary.txt" ]; then
+            cat "${{ env.OUT_DIR }}/prepare_summary.txt"
+          fi
+          if [ -f "${{ env.OUT_DIR }}/warnings.json" ]; then
+            echo "---- warnings.json ----"
+            cat "${{ env.OUT_DIR }}/warnings.json"
+          fi
+
+      - name: Write CHANGELOG entry 0
+        id: commit_changelog
+        env:
+          OUT_DIR: ${{ env.OUT_DIR }}
+          CHANGELOG_FILE: ${{ env.CHANGELOG_FILE }}
+          CHANGELOG_URL: ${{ env.CHANGELOG_URL }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PROJECT_TYPE: ${{ env.PROJECT_TYPE }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          set -euo pipefail
+          python3 "$IMPORT_SCRIPT" commit
+
+      - name: Commit and push CHANGELOG.md
+        id: git_commit
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md
+          if git diff --staged --quiet; then
+            echo "No CHANGELOG.md changes to commit"
+          else
+            git commit -m "Add CHANGELOG entry 0 (Modrinth history import)"
+            git push
+          fi
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release and upload assets
+        id: create_release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OUT_DIR: ${{ env.OUT_DIR }}
+          TAG: ${{ steps.commit_changelog.outputs.release_tag }}
+          DATE: ${{ steps.commit_changelog.outputs.import_date }}
+          TARGET_SHA: ${{ steps.git_commit.outputs.sha }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TAG:-}" ]; then
+            echo "Error: release tag empty"
+            exit 1
+          fi
+          if [ -z "${TARGET_SHA:-}" ]; then
+            echo "Error: target sha empty"
+            exit 1
+          fi
+          TITLE="[0] - ${DATE}"
+          NOTES="${OUT_DIR}/release-notes.md"
+          if [ ! -f "$NOTES" ]; then
+            echo "Error: missing $NOTES"
+            exit 1
+          fi
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            if [ "$FORCE" != "true" ]; then
+              echo "Error: release $TAG already exists (use force=true)"
+              exit 1
+            fi
+            echo "Deleting existing release $TAG (force=true)"
+            gh release delete "$TAG" --yes --cleanup-tag
+          fi
+
+          echo "Creating release tag=$TAG title=$TITLE target=$TARGET_SHA"
+          gh release create "$TAG" \
+            --title "$TITLE" \
+            --notes-file "$NOTES" \
+            --target "$TARGET_SHA"
+
+          html_url="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" --jq .html_url)"
+          echo "release_url=$html_url" >> "$GITHUB_OUTPUT"
+          echo "release_tag=$TAG" >> "$GITHUB_OUTPUT"
+
+          # Attach zips + metadata.json
+          shopt -s nullglob
+          assets=("${OUT_DIR}/zips"/*.zip "${OUT_DIR}/metadata.json")
+          for f in "${assets[@]}"; do
+            [ -f "$f" ] || continue
+            echo "Uploading $(basename "$f")"
+            gh release upload "$TAG" "$f" --clobber
+          done
+
+      - name: On failure — residual (durable only)
+        if: failure()
+        env:
+          RESIDUAL_STAGE: import
+          RESIDUAL_OUTCOME: failure
+          CHANGELOG_DATE: ${{ steps.commit_changelog.outputs.import_date }}
+          RELEASE_TAG: ${{ steps.create_release.outputs.release_tag }}
+          RELEASE_URL: ${{ steps.create_release.outputs.release_url }}
+        run: |
+          set -euo pipefail
+          IMPORT_DURABLE_JSON=$(python3 - <<'PY'
+          import json
+          d = []
+          day = """${{ steps.commit_changelog.outputs.import_date }}""".strip()
+          if day:
+              d.append(f"CHANGELOG.md ## [0] - {day}")
+          tag = """${{ steps.create_release.outputs.release_tag }}""".strip()
+          url = """${{ steps.create_release.outputs.release_url }}""".strip()
+          if tag:
+              d.append(f"tag {tag}")
+          if url:
+              d.append(url)
+          print(json.dumps(d))
+          PY
+          )
+          export IMPORT_DURABLE_JSON
+          echo "durable=$IMPORT_DURABLE_JSON"
+          python3 "$RESIDUALS_SCRIPT"
+
+      - name: On success — residual
+        if: success()
+        env:
+          RESIDUAL_STAGE: import
+          RESIDUAL_OUTCOME: success
+          CHANGELOG_DATE: ${{ steps.commit_changelog.outputs.import_date }}
+          RELEASE_TAG: ${{ steps.create_release.outputs.release_tag }}
+          RELEASE_URL: ${{ steps.create_release.outputs.release_url }}
+          IMPORT_VERSIONS_JSON: ${{ steps.commit_changelog.outputs.version_numbers_json }}
+        run: |
+          set -euo pipefail
+          python3 "$RESIDUALS_SCRIPT"
