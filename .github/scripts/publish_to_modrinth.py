@@ -220,7 +220,14 @@ def main() -> None:
 
     entry_n = next_sequence(changelog_file.read_text(encoding="utf-8"))
     day = datetime.now(timezone.utc).date().isoformat()
-    changelog = format_modrinth_changelog(body, entry_n, day, changelog_url)
+    github_repository = os.environ.get("GITHUB_REPOSITORY", "").strip()
+    changelog = format_modrinth_changelog(
+        body,
+        entry_n,
+        day,
+        changelog_url,
+        github_repository=github_repository or None,
+    )
     print(f"Changelog entry n={entry_n} date={day}")
 
     project_id = meta["project_id"]
