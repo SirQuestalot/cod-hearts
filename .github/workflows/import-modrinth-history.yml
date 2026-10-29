@@ -196,7 +196,7 @@ jobs:
           if git diff --staged --quiet; then
             echo "No CHANGELOG.md changes to commit"
           else
-            git commit -m "Add CHANGELOG entry 0 (Modrinth history import)"
+            git commit -m "Update CHANGELOG.md"
             git push
             PUSHED=true
           fi
