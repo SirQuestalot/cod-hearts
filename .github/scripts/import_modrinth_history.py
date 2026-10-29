@@ -7,11 +7,8 @@ Commands:
   commit   — write ## [0] section and release notes file (git/release done in workflow)
 
 Env (prepare):
-  PROJECT_SLUG, PROJECT_TYPE (default resourcepack)
-  MODRINTH_API (default https://api.modrinth.com/v2)
-  CHANGELOG_FILE (default CHANGELOG.md)
-  OUT_DIR (artefact output)
-  FORCE (true/false)
+  PROJECT_SLUG, PROJECT_TYPE, MODRINTH_API, CHANGELOG_FILE, OUT_DIR, FORCE
+
 Env (commit):
   OUT_DIR, CHANGELOG_FILE, CHANGELOG_URL, GITHUB_REPOSITORY, FORCE
   IMPORT_DATE (fallback if metadata lacks imported_date)
@@ -242,24 +239,6 @@ def _gh_out(name: str, value: str) -> None:
             fh.write(f"{name}={value}\n")
 
 
-def _print_warnings(warnings: list[str]) -> None:
-    if not warnings:
-        print("No warnings.")
-        return
-    print(f"\n{len(warnings)} warning(s):")
-    for w in warnings:
-        print(f"  - {w}")
-    summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
-    if summary_path:
-        try:
-            with open(summary_path, "a", encoding="utf-8") as fh:
-                fh.write("\n### Import prepare warnings\n\n")
-                for w in warnings:
-                    fh.write(f"- {w}\n")
-        except OSError as e:
-            print(f"(Could not write GITHUB_STEP_SUMMARY: {e})", file=sys.stderr)
-
-
 def cmd_prepare() -> None:
     api = env("MODRINTH_API", "https://api.modrinth.com/v2").rstrip("/")
     slug = env("PROJECT_SLUG")
@@ -391,31 +370,26 @@ def cmd_prepare() -> None:
     (out_dir / "metadata.json").write_text(
         json.dumps(meta, indent=2) + "\n", encoding="utf-8"
     )
-    (out_dir / "warnings.json").write_text(
-        json.dumps(warnings, indent=2) + "\n", encoding="utf-8"
-    )
 
-    summary_lines = [
+    # Review block for the dedicated prepare workflow step (log only; not STEP_SUMMARY).
+    review_lines = [
         f"Prepared import for {slug}",
         f"imported_date={imported_date if entries else '(none)'}",
         f"entries={len(entries)}",
         f"warnings={len(warnings)}",
         "",
-        "Versions:",
+        "Warnings:",
     ]
+    if warnings:
+        for w in warnings:
+            review_lines.append(f"  {w}")
+    review_lines.append("")
+    review_lines.append("Versions:")
     for e in entries:
-        summary_lines.append(
+        review_lines.append(
             f"  {e['version_number']}  {e['modrinth_id']}  {e['file']}"
         )
-    if warnings:
-        summary_lines.append("")
-        summary_lines.append("Warnings:")
-        for w in warnings:
-            summary_lines.append(f"  {w}")
-    summary = "\n".join(summary_lines) + "\n"
-    (out_dir / "prepare_summary.txt").write_text(summary, encoding="utf-8")
-    print(summary)
-    _print_warnings(warnings)
+    review = "\n".join(review_lines) + "\n"
 
     _gh_out("imported_date", imported_date if entries else "")
     _gh_out("entry_count", str(len(entries)))
@@ -423,6 +397,7 @@ def cmd_prepare() -> None:
         "version_numbers_json",
         json.dumps([e["version_number"] for e in entries]),
     )
+    _gh_out("review_summary", review)
 
 
 def cmd_commit() -> None:
