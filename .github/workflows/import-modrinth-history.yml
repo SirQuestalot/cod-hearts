@@ -1,8 +1,9 @@
 # =============================================================================
 # Import Modrinth history as CHANGELOG entry 0 + GitHub Release (full mirror)
 # -----------------------------------------------------------------------------
-# prepare: anonymous Modrinth GETs, download zips, warnings → log/summary
-# commit:  environment get_approval → CHANGELOG append, release, attach assets
+# gate:    fail fast if ## [0] or any changelog0-* exists (unless force)
+# prepare: complete version fetch, downloads, warnings (no durable writes)
+# commit:  get_approval → force cleanup → CHANGELOG push → release + assets
 # =============================================================================
 name: Import Modrinth History
 
@@ -14,7 +15,7 @@ on:
   workflow_dispatch:
     inputs:
       force:
-        description: Replace existing changelog entry [0] / changelog0-* release if true
+        description: Replace existing ## [0] and delete all changelog0-* releases if true
         type: boolean
         default: false
 
@@ -29,7 +30,57 @@ env:
   ARTIFACT_NAME: import-modrinth-history-${{ github.run_id }}
 
 jobs:
+  gate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Fail if entry 0 already exists (unless force)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FORCE: ${{ inputs.force }}
+          CHANGELOG_FILE: ${{ env.CHANGELOG_FILE }}
+        run: |
+          set -euo pipefail
+          FORCE_FLAG=false
+          if [ "$FORCE" = "true" ]; then
+            FORCE_FLAG=true
+          fi
+
+          if grep -qE '^## \[0\]' "$CHANGELOG_FILE"; then
+            echo "Found ## [0] section in $CHANGELOG_FILE"
+            if [ "$FORCE_FLAG" != "true" ]; then
+              echo "Error: ## [0] already exists. Re-run with force=true to replace."
+              exit 1
+            fi
+            echo "force=true: will replace ## [0] on commit."
+          else
+            echo "No ## [0] section in CHANGELOG."
+          fi
+
+          mapfile -t TAGS < <(
+            gh api --paginate "repos/${GITHUB_REPOSITORY}/releases" \
+              --jq '.[].tag_name' \
+              | grep -E '^changelog0-' \
+              || true
+          )
+          if [ "${#TAGS[@]}" -gt 0 ]; then
+            echo "Found existing entry-0 release tag(s): ${TAGS[*]}"
+            if [ "$FORCE_FLAG" != "true" ]; then
+              echo "Error: changelog0-* release(s) present: ${TAGS[*]}"
+              echo "Re-run with force=true to delete them and replace ## [0]."
+              exit 1
+            fi
+            echo "force=true: will delete these tags on commit: ${TAGS[*]}"
+          else
+            echo "No existing changelog0-* releases."
+          fi
+
   prepare:
+    needs: gate
     runs-on: ubuntu-latest
     outputs:
       imported_date: ${{ steps.prepare.outputs.imported_date }}
@@ -89,6 +140,34 @@ jobs:
             cat "${{ env.OUT_DIR }}/warnings.json"
           fi
 
+      - name: Force cleanup of existing changelog0-* releases
+        id: force_cleanup
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          set -euo pipefail
+          DELETED=()
+          if [ "$FORCE" != "true" ]; then
+            echo "force=false: no release cleanup"
+            echo "deleted_tags=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          mapfile -t TAGS < <(
+            gh api --paginate "repos/${GITHUB_REPOSITORY}/releases" \
+              --jq '.[].tag_name' \
+              | grep -E '^changelog0-' \
+              || true
+          )
+          for t in "${TAGS[@]+"${TAGS[@]}"}"; do
+            [ -n "$t" ] || continue
+            echo "Deleting release/tag $t"
+            gh release delete "$t" --yes --cleanup-tag
+            DELETED+=("$t")
+          done
+          echo "deleted_tags=${DELETED[*]}" >> "$GITHUB_OUTPUT"
+          echo "Deleted ${#DELETED[@]} changelog0-* release(s)"
+
       - name: Write CHANGELOG entry 0
         id: commit_changelog
         env:
@@ -109,13 +188,16 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add CHANGELOG.md
+          PUSHED=false
           if git diff --staged --quiet; then
             echo "No CHANGELOG.md changes to commit"
           else
             git commit -m "Add CHANGELOG entry 0 (Modrinth history import)"
             git push
+            PUSHED=true
           fi
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "pushed=$PUSHED" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release and upload assets
         id: create_release
@@ -125,7 +207,6 @@ jobs:
           TAG: ${{ steps.commit_changelog.outputs.release_tag }}
           DATE: ${{ steps.commit_changelog.outputs.import_date }}
           TARGET_SHA: ${{ steps.git_commit.outputs.sha }}
-          FORCE: ${{ inputs.force }}
         run: |
           set -euo pipefail
           if [ -z "${TAG:-}" ]; then
@@ -144,12 +225,8 @@ jobs:
           fi
 
           if gh release view "$TAG" >/dev/null 2>&1; then
-            if [ "$FORCE" != "true" ]; then
-              echo "Error: release $TAG already exists (use force=true)"
-              exit 1
-            fi
-            echo "Deleting existing release $TAG (force=true)"
-            gh release delete "$TAG" --yes --cleanup-tag
+            echo "Error: release $TAG still exists after cleanup"
+            exit 1
           fi
 
           echo "Creating release tag=$TAG title=$TITLE target=$TARGET_SHA"
@@ -161,15 +238,18 @@ jobs:
           html_url="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" --jq .html_url)"
           echo "release_url=$html_url" >> "$GITHUB_OUTPUT"
           echo "release_tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "release_created=true" >> "$GITHUB_OUTPUT"
 
-          # Attach zips + metadata.json
           shopt -s nullglob
           assets=("${OUT_DIR}/zips"/*.zip "${OUT_DIR}/metadata.json")
+          UPLOADED=()
           for f in "${assets[@]}"; do
             [ -f "$f" ] || continue
             echo "Uploading $(basename "$f")"
             gh release upload "$TAG" "$f" --clobber
+            UPLOADED+=("$(basename "$f")")
           done
+          echo "uploaded_count=${#UPLOADED[@]}" >> "$GITHUB_OUTPUT"
 
       - name: On failure — residual (durable only)
         if: failure()
@@ -184,15 +264,24 @@ jobs:
           IMPORT_DURABLE_JSON=$(python3 - <<'PY'
           import json
           d = []
+          deleted = """${{ steps.force_cleanup.outputs.deleted_tags }}""".strip()
+          if deleted:
+              for t in deleted.split():
+                  d.append(f"deleted release/tag {t}")
+          pushed = """${{ steps.git_commit.outputs.pushed }}""".strip()
           day = """${{ steps.commit_changelog.outputs.import_date }}""".strip()
-          if day:
-              d.append(f"CHANGELOG.md ## [0] - {day}")
+          if pushed == "true" and day:
+              d.append(f"CHANGELOG.md ## [0] - {day} (pushed)")
           tag = """${{ steps.create_release.outputs.release_tag }}""".strip()
           url = """${{ steps.create_release.outputs.release_url }}""".strip()
-          if tag:
+          created = """${{ steps.create_release.outputs.release_created }}""".strip()
+          if created == "true" and tag:
               d.append(f"tag {tag}")
           if url:
               d.append(url)
+          uploaded = """${{ steps.create_release.outputs.uploaded_count }}""".strip()
+          if uploaded and uploaded != "0":
+              d.append(f"uploaded {uploaded} release asset(s)")
           print(json.dumps(d))
           PY
           )
