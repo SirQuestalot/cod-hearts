@@ -86,6 +86,7 @@ jobs:
       imported_date: ${{ steps.prepare.outputs.imported_date }}
       entry_count: ${{ steps.prepare.outputs.entry_count }}
       version_numbers_json: ${{ steps.prepare.outputs.version_numbers_json }}
+      review_summary: ${{ steps.prepare.outputs.review_summary }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -110,6 +111,20 @@ jobs:
           path: ${{ env.OUT_DIR }}/
           if-no-files-found: error
 
+      - name: Prepare review summary
+        env:
+          REVIEW_SUMMARY: ${{ steps.prepare.outputs.review_summary }}
+        run: |
+          set -euo pipefail
+          if [ -z "${REVIEW_SUMMARY}" ]; then
+            echo "Error: review_summary output is empty"
+            exit 1
+          fi
+          printf '%s' "$REVIEW_SUMMARY"
+          if [ "${REVIEW_SUMMARY: -1}" != $'\n' ]; then
+            printf '\n'
+          fi
+
   commit:
     needs: prepare
     if: ${{ needs.prepare.outputs.entry_count != '' && needs.prepare.outputs.entry_count != '0' }}
@@ -128,17 +143,6 @@ jobs:
         with:
           name: ${{ env.ARTIFACT_NAME }}
           path: ${{ env.OUT_DIR }}
-
-      - name: Show prepare summary (for approval review)
-        run: |
-          set -euo pipefail
-          if [ -f "${{ env.OUT_DIR }}/prepare_summary.txt" ]; then
-            cat "${{ env.OUT_DIR }}/prepare_summary.txt"
-          fi
-          if [ -f "${{ env.OUT_DIR }}/warnings.json" ]; then
-            echo "---- warnings.json ----"
-            cat "${{ env.OUT_DIR }}/warnings.json"
-          fi
 
       - name: Force cleanup of existing changelog0-* releases
         id: force_cleanup
