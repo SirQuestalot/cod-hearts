@@ -3,7 +3,7 @@
 Import pre-automation Modrinth versions as entry 0 (CHANGELOG + GitHub Release).
 
 Commands:
-  prepare  — complete version fetch, download zips, write artifact (no durable writes)
+  prepare  — fetch candidate versions by id, download zips, write artifact (no durable writes)
   commit   — write ## [0] section and release notes file (git/release done in workflow)
 
 Env (prepare):
@@ -12,9 +12,6 @@ Env (prepare):
   CHANGELOG_FILE (default CHANGELOG.md)
   OUT_DIR (artefact output)
   FORCE (true/false)
-  GITHUB_REPOSITORY (owner/repo) — optional check for existing release via gh not required here
-
-
 Env (commit):
   OUT_DIR, CHANGELOG_FILE, CHANGELOG_URL, GITHUB_REPOSITORY, FORCE
   IMPORT_DATE (fallback if metadata lacks imported_date)
@@ -145,9 +142,8 @@ def primary_file(version: dict) -> dict | None:
 
 
 def fetch_version_by_id(api: str, version_id: str) -> dict | None:
-    """Return version dict or None after exhausting retries on transient errors."""
+    """Return version dict, or None after retries / permanent failure."""
     url = f"{api}/version/{version_id}"
-    last_error: BaseException | None = None
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
             data = http_json(url)
@@ -155,7 +151,6 @@ def fetch_version_by_id(api: str, version_id: str) -> dict | None:
                 return data
             return None
         except urllib.error.HTTPError as e:
-            last_error = e
             if e.code in (404, 403, 410):
                 return None
             if attempt < MAX_ATTEMPTS and is_transient(e):
@@ -163,11 +158,8 @@ def fetch_version_by_id(api: str, version_id: str) -> dict | None:
                 print(f"  transient HTTP {e.code} for {version_id}; retry in {wait}s")
                 time.sleep(wait)
                 continue
-            if is_transient(e):
-                return None
             return None
         except Exception as e:
-            last_error = e
             if attempt < MAX_ATTEMPTS and is_transient(e):
                 wait = min(BACKOFF_CAP_SEC, 2**attempt)
                 print(f"  transient error for {version_id}: {e}; retry in {wait}s")
@@ -178,11 +170,10 @@ def fetch_version_by_id(api: str, version_id: str) -> dict | None:
 
 
 def fetch_versions_by_ids(api: str, ids: list[str]) -> dict[str, dict]:
-    """Batch GET /versions?ids=... ; returns id -> version for successful hits."""
+    """Batch GET /versions?ids=... ; returns id -> version for hits."""
     out: dict[str, dict] = {}
     if not ids:
         return out
-    # API expects a JSON array in the query string
     encoded = urllib.parse.quote(json.dumps(ids), safe="")
     url = f"{api}/versions?ids={encoded}"
     try:
@@ -191,8 +182,9 @@ def fetch_versions_by_ids(api: str, ids: list[str]) -> dict[str, dict]:
         print(f"  batch fetch failed ({e}); falling back to per-id")
         for vid in ids:
             ver = fetch_version_by_id(api, vid)
-            if ver and str(ver.get("id") or "") == vid:
-                out[vid] = ver
+            if ver is not None:
+                rid = str(ver.get("id") or "").strip() or vid
+                out[rid] = ver
         return out
     if not isinstance(data, list):
         return out
@@ -204,40 +196,34 @@ def fetch_versions_by_ids(api: str, ids: list[str]) -> dict[str, dict]:
     return out
 
 
-def load_all_project_versions(api: str, slug: str, expected_ids: list[str]) -> tuple[dict[str, dict], list[str]]:
+def load_candidate_versions(
+    api: str, candidate_ids: list[str]
+) -> tuple[dict[str, dict], list[str]]:
     """
-    Return (id -> version, warnings for ids that could not be loaded).
-    Completeness is defined by expected_ids (from project.versions).
+    Fetch version objects only for candidate ids (already diffed against exclusions).
+    Returns (id -> version, warnings for ids that could not be loaded).
     """
     by_id: dict[str, dict] = {}
     warnings: list[str] = []
+    if not candidate_ids:
+        return by_id, warnings
 
-    bulk = http_json_or_exit(f"{api}/project/{slug}/version")
-    if isinstance(bulk, list):
-        for ver in bulk:
-            if isinstance(ver, dict):
-                vid = str(ver.get("id") or "").strip()
-                if vid:
-                    by_id[vid] = ver
-    print(f"Bulk list returned {len(by_id)} version object(s)")
-
-    missing = [vid for vid in expected_ids if vid not in by_id]
-    if missing:
-        print(f"Gap-fill required for {len(missing)} id(s)")
-        for i in range(0, len(missing), VERSION_IDS_BATCH):
-            chunk = missing[i : i + VERSION_IDS_BATCH]
-            got = fetch_versions_by_ids(api, chunk)
-            by_id.update(got)
-            still = [vid for vid in chunk if vid not in by_id]
-            for vid in still:
-                ver = fetch_version_by_id(api, vid)
-                if ver is not None:
-                    rid = str(ver.get("id") or "").strip() or vid
-                    by_id[rid] = ver
-                else:
-                    warnings.append(
-                        f"skip version id={vid}: could not load version object after retries"
-                    )
+    print(f"Fetching {len(candidate_ids)} candidate version object(s) by id")
+    for i in range(0, len(candidate_ids), VERSION_IDS_BATCH):
+        chunk = candidate_ids[i : i + VERSION_IDS_BATCH]
+        got = fetch_versions_by_ids(api, chunk)
+        by_id.update(got)
+        for vid in chunk:
+            if vid in by_id:
+                continue
+            ver = fetch_version_by_id(api, vid)
+            if ver is not None:
+                rid = str(ver.get("id") or "").strip() or vid
+                by_id[rid] = ver
+            else:
+                warnings.append(
+                    f"skip version id={vid}: could not load version object after retries"
+                )
 
     return by_id, warnings
 
@@ -313,40 +299,19 @@ def cmd_prepare() -> None:
         f"expected_versions={len(expected_ids)}"
     )
 
-    by_id, load_warnings = load_all_project_versions(api, slug, expected_ids)
-    warnings: list[str] = list(load_warnings)
-
-    # Import candidates: expected ids not already in changelog n>=1
     candidate_ids = [vid for vid in expected_ids if vid not in excluded]
     print(
         f"Import candidates after exclusion: {len(candidate_ids)} "
         f"(skipped already-recorded: {len(expected_ids) - len(candidate_ids)})"
     )
 
-    # Only warn about load failures for in-scope ids
-    scoped_load_warnings = [
-        w for w in load_warnings
-        if any(vid in w for vid in candidate_ids)
-    ]
-    # Re-build warnings: keep load warnings only for candidates; drop noise for excluded
-    warnings = []
-    for vid in candidate_ids:
-        if vid not in by_id:
-            warnings.append(
-                f"skip version id={vid}: could not load version object after retries"
-            )
+    by_id, warnings = load_candidate_versions(api, candidate_ids)
 
     prefix = derived_zip_prefix(slug)
     entries: list[dict] = []
     used_names: set[str] = set()
 
-    # Process candidates in newest-first order when date is known
-    ordered = []
-    for vid in candidate_ids:
-        ver = by_id.get(vid)
-        if ver is None:
-            continue
-        ordered.append(ver)
+    ordered = [by_id[vid] for vid in candidate_ids if vid in by_id]
     ordered.sort(key=lambda v: v.get("date_published") or "", reverse=True)
 
     for ver in ordered:
