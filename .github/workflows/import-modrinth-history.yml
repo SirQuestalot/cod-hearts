@@ -244,15 +244,34 @@ jobs:
           echo "release_tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "release_created=true" >> "$GITHUB_OUTPUT"
 
-          shopt -s nullglob
-          assets=("${OUT_DIR}/zips"/*.zip "${OUT_DIR}/metadata.json")
+          # Upload zips in metadata.json entries order (newest-first), then metadata.json
+          META="${OUT_DIR}/metadata.json"
+          if [ ! -f "$META" ]; then
+            echo "Error: missing $META"
+            exit 1
+          fi
           UPLOADED=()
-          for f in "${assets[@]}"; do
-            [ -f "$f" ] || continue
-            echo "Uploading $(basename "$f")"
+          while IFS= read -r file_name; do
+            [ -n "$file_name" ] || continue
+            f="${OUT_DIR}/zips/${file_name}"
+            if [ ! -f "$f" ]; then
+              echo "Error: missing zip for entry: $f"
+              exit 1
+            fi
+            echo "Uploading ${file_name}"
             gh release upload "$TAG" "$f" --clobber
-            UPLOADED+=("$(basename "$f")")
-          done
+            UPLOADED+=("$file_name")
+          done < <(python3 -c "
+          import json, sys
+          meta = json.load(open(sys.argv[1], encoding='utf-8'))
+          for e in meta.get('entries') or []:
+              fn = (e.get('file') or '').strip()
+              if fn:
+                  print(fn)
+          " "$META")
+          echo "Uploading metadata.json"
+          gh release upload "$TAG" "$META" --clobber
+          UPLOADED+=("metadata.json")
           echo "uploaded_count=${#UPLOADED[@]}" >> "$GITHUB_OUTPUT"
 
       - name: On failure — residual (durable only)
