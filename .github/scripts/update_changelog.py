@@ -10,9 +10,9 @@ Used by:
   - import_modrinth_history → entry-0 section helpers, ID extraction
 
 Version-list item shape:
-  **label**&ensp;[version](url)<!--modrinthid:ID-->
+  label&ensp;[version](url)<!--modrinthid:ID-->
 
-Items joined with " - ".
+Under ### Modrinth as one bullet per version (entry 0: date groups).
 
 CHANGELOG section footer:
   [GitHub Release](url) · changelog{n}-YYYY-MM-DD
@@ -101,7 +101,7 @@ def format_version_item(
 ) -> str:
     """
     Single version-list item:
-      **label**&ensp;[ver](url)<!--modrinthid:ID-->
+      label&ensp;[ver](url)<!--modrinthid:ID-->
     Label omitted when empty. ID comment omitted when id missing.
     """
     ver = version_number.strip()
@@ -119,7 +119,7 @@ def format_version_item(
 
     lab = (label or "").strip()
     if lab:
-        return f"**{lab}**{ENSP}{core}"
+        return f"{lab}{ENSP}{core}"
     return core
 
 
@@ -180,6 +180,19 @@ def format_modrinth_changelog(
     return body + "\n\n" + line1 + "\n" + line2
 
 
+def format_modrinth_section(version_items: list[str]) -> list[str]:
+    """Lines for ### Modrinth with one bullet per preformatted version item."""
+    if not version_items:
+        raise SystemExit("format_modrinth_section: version_items is empty")
+    lines = ["### Modrinth", ""]
+    for item in version_items:
+        item = item.strip()
+        if not item:
+            continue
+        lines.append(f"- {item}")
+    return lines
+
+
 def format_github_section(
     body: str,
     version_items: list[str],
@@ -197,16 +210,20 @@ def format_github_section(
     include_header=True (CHANGELOG.md promote):
       ## [n] - YYYY-MM-DD
 
-      <version list>
-
       <body>
+
+      ### Modrinth
+      - item
+      ...
 
       [GitHub Release](url) · changelog{n}-YYYY-MM-DD
 
     include_header=False (Release notes):
-      <version list>
-
       <body>
+
+      ### Modrinth
+      - item
+      ...
 
       [Full project changelog](url) · entry n · YYYY-MM-DD
     """
@@ -221,14 +238,13 @@ def format_github_section(
         raise SystemExit("format_github_section: day is empty")
 
     day_s = day.strip()
-    versions_line = format_version_list_line(version_items)
     parts: list[str] = []
     if include_header:
         parts.append(f"## [{seq}] - {day_s}")
         parts.append("")
-    parts.append(versions_line)
-    parts.append("")
     parts.extend(body.splitlines())
+    parts.append("")
+    parts.extend(format_modrinth_section(version_items))
     parts.append("")
 
     if include_header:
@@ -293,8 +309,8 @@ def format_entry0_version_lines(
     slug: str,
 ) -> str:
     """
-    Form C: day-grouped, newest day first, newest-within-day first.
-    Label = Modrinth title with project title prefix stripped; omit if empty.
+    ### Modrinth body for entry 0: bold date parent bullets, nested version bullets.
+    Days newest first; within a day newest first; blank line between day groups.
     """
 
     def parse_day(iso: str) -> str:
@@ -327,8 +343,10 @@ def format_entry0_version_lines(
         by_day[d].append(e)
 
     lines_out: list[str] = []
-    for d in day_order:
-        items: list[str] = []
+    for i, d in enumerate(day_order):
+        if i > 0:
+            lines_out.append("")
+        lines_out.append(f"- **{d}**")
         for e in by_day[d]:
             ver = str(e.get("version_number") or "").strip()
             mid = str(e.get("modrinth_id") or e.get("id") or "").strip()
@@ -337,16 +355,16 @@ def format_entry0_version_lines(
             url = None
             if mid and slug:
                 url = f"https://modrinth.com/{project_type}/{slug}/version/{mid}"
-            items.append(
-                format_version_item(
-                    version_number=ver or "?",
-                    url=url,
-                    label=lab or None,
-                    modrinth_id=mid or None,
-                )
+            item = format_version_item(
+                version_number=ver or "?",
+                url=url,
+                label=lab or None,
+                modrinth_id=mid or None,
             )
-        lines_out.append(f"{d} {format_version_list_line(items)}")
+            lines_out.append(f"  - {item}")
     return "\n".join(lines_out)
+
+
 
 
 def format_entry0_section(
@@ -360,12 +378,14 @@ def format_entry0_section(
     parts = [
         f"## [0] - {day.strip()}",
         "",
-        version_lines.strip(),
-        "",
         "### Added",
         "- Imported pre-automation versions from Modrinth.",
         "- Per-version (pre-KaC) changelogs from Modrinth are stored in "
         "`metadata.json` (GitHub Release asset).",
+        "",
+        "### Modrinth",
+        "",
+        version_lines.strip(),
         "",
         f"[GitHub Release]({release_url_str}) · {tag}",
         "",
@@ -380,17 +400,20 @@ def format_entry0_release_notes(
     changelog_url: str,
 ) -> str:
     parts = [
-        version_lines.strip(),
-        "",
         "### Added",
         "- Imported pre-automation versions from Modrinth.",
         "- Per-version (pre-KaC) changelogs from Modrinth are stored in "
         "`metadata.json` (GitHub Release asset).",
         "",
+        "### Modrinth",
+        "",
+        version_lines.strip(),
+        "",
         f"[{DEFAULT_FOOTER_LABEL}]({changelog_url.strip()}) · entry 0 · {day.strip()}",
         "",
     ]
     return "\n".join(parts)
+
 
 
 def append_entry0_to_changelog(changelog_path: Path, section_text: str) -> None:
