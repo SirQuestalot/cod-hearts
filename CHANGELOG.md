@@ -15,6 +15,7 @@ These section headings are used under each release.<br>A heading is only include
 - `Removed` — Content or behavior that is removed as of this release.
 - `Fixed` — Corrections to bugs, broken assets, or incorrect behavior.
 - `Security` — Changes that address a vulnerability or reduce a security risk.
+- `Modrinth` — Modrinth versions covered by the other headers.
 
 ## [Unreleased]
 
