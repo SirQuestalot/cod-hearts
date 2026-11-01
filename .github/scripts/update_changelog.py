@@ -123,13 +123,6 @@ def format_version_item(
     return core
 
 
-def format_version_list_line(items: list[str]) -> str:
-    """Join pre-formatted items with ' - '."""
-    if not items:
-        raise SystemExit("format_version_list_line: items is empty")
-    return " - ".join(items)
-
-
 def format_modrinth_changelog(
     body: str,
     entry_n: int,
