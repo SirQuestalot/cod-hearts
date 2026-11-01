@@ -21,6 +21,7 @@ on:
 
 env:
   IMPORT_SCRIPT: .github/scripts/import_modrinth_history.py
+  BUNDLE_SCRIPT: .github/scripts/build_release_bundle.py
   RESIDUALS_SCRIPT: .github/scripts/report_residuals.py
   MODRINTH_API: https://api.modrinth.com/v2
   CHANGELOG_FILE: CHANGELOG.md
@@ -244,35 +245,24 @@ jobs:
           echo "release_tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "release_created=true" >> "$GITHUB_OUTPUT"
 
-          # Upload zips in metadata.json entries order (newest-first), then metadata.json
+          # Aggregate pack zips into changelog0-DATE.zip (by-date layout), then upload
+          # that archive plus metadata.json only.
           META="${OUT_DIR}/metadata.json"
           if [ ! -f "$META" ]; then
             echo "Error: missing $META"
             exit 1
           fi
-          UPLOADED=()
-          while IFS= read -r file_name; do
-            [ -n "$file_name" ] || continue
-            f="${OUT_DIR}/zips/${file_name}"
-            if [ ! -f "$f" ]; then
-              echo "Error: missing zip for entry: $f"
-              exit 1
-            fi
-            echo "Uploading ${file_name}"
-            gh release upload "$TAG" "$f" --clobber
-            UPLOADED+=("$file_name")
-          done < <(python3 -c "
-          import json, sys
-          meta = json.load(open(sys.argv[1], encoding='utf-8'))
-          for e in meta.get('entries') or []:
-              fn = (e.get('file') or '').strip()
-              if fn:
-                  print(fn)
-          " "$META")
+          BUNDLE="${OUT_DIR}/${TAG}.zip"
+          python3 "$BUNDLE_SCRIPT" \
+            --metadata "$META" \
+            --zips-dir "${OUT_DIR}/zips" \
+            --out "$BUNDLE" \
+            --layout by-date
+          echo "Uploading $(basename "$BUNDLE")"
+          gh release upload "$TAG" "$BUNDLE" --clobber
           echo "Uploading metadata.json"
           gh release upload "$TAG" "$META" --clobber
-          UPLOADED+=("metadata.json")
-          echo "uploaded_count=${#UPLOADED[@]}" >> "$GITHUB_OUTPUT"
+          echo "uploaded_count=2" >> "$GITHUB_OUTPUT"
 
       - name: On failure — residual (durable only)
         if: failure()
