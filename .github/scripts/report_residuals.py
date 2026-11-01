@@ -133,14 +133,6 @@ def format_import_residuals(
     if outcome == "success":
         lines.append("SUCCESS")
         lines.append("")
-        lines.append("Imported versions")
-        nums = version_numbers or []
-        if nums:
-            for v in nums:
-                lines.append(f"  {v}")
-        else:
-            lines.append("  (none)")
-        lines.append("")
         lines.append("GitHub")
         if day:
             lines.append(f"  CHANGELOG.md ## [0] - {day}")
@@ -148,6 +140,14 @@ def format_import_residuals(
             lines.append(f"  tag {release_tag}")
         if release_url:
             lines.append(f"  {release_url}")
+        lines.append("")
+        lines.append("Imported versions")
+        nums = version_numbers or []
+        if nums:
+            for v in nums:
+                lines.append(f"  {v}")
+        else:
+            lines.append("  (none)")
         lines.append("")
         return "\n".join(lines)
 
@@ -161,6 +161,13 @@ def format_import_residuals(
     else:
         lines.append("  (none — no durable writes completed)")
     lines.append("")
+    # Version list only when provided (below durable status)
+    nums = version_numbers or []
+    if nums:
+        lines.append("Imported versions")
+        for v in nums:
+            lines.append(f"  {v}")
+        lines.append("")
     return "\n".join(lines)
 
 
