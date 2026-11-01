@@ -22,7 +22,7 @@ These section headers are used under each release.<br>A header is only included 
 ### Deprecated
 - test
 
-## [0] - 2026-10-30
+## [0] - 2026-11-01
 
 ### Added
 - Imported pre-automation versions from Modrinth.
@@ -103,4 +103,4 @@ These section headers are used under each release.<br>A header is only included 
   - 1.6.x [1.0.0](https://modrinth.com/resourcepack/cod-hearts/version/H0LO8XcG)<!--modrinthid:H0LO8XcG-->
   - 1.0-1.5.x [0.0.0](https://modrinth.com/resourcepack/cod-hearts/version/dBcfaBdX)<!--modrinthid:dBcfaBdX-->
 
-[GitHub Release](https://github.com/SirQuestalot/cod-hearts/releases/tag/changelog0-2026-10-30) · changelog0-2026-10-30
+[GitHub Release](https://github.com/SirQuestalot/cod-hearts/releases/tag/changelog0-2026-11-01) · changelog0-2026-11-01
