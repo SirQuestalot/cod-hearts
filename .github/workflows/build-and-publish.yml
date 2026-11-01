@@ -148,6 +148,7 @@ env:
     }}
   PUBLISH_SCRIPT: .github/scripts/publish_to_modrinth.py
   CHANGELOG_SCRIPT: .github/scripts/update_changelog.py
+  BUNDLE_SCRIPT: .github/scripts/build_release_bundle.py
   RESIDUALS_SCRIPT: .github/scripts/report_residuals.py
   MODRINTH_API: https://api.modrinth.com/v2
   GITHUB_API: https://api.github.com
@@ -755,13 +756,18 @@ jobs:
           TAG="changelog${ENTRY}-${DATE}"
           TITLE="[${ENTRY}] - ${DATE}"
 
-          shopt -s nullglob
-          zips=(dist/*.zip)
-          if [ "${#zips[@]}" -eq 0 ]; then
-            echo "Error: no .zip files found under dist/ to attach"
+          META="dist/metadata.json"
+          if [ ! -f "$META" ]; then
+            echo "Error: missing $META"
             ls -la dist/ || true
             exit 1
           fi
+          BUNDLE="dist/${TAG}.zip"
+          python3 "$BUNDLE_SCRIPT" \
+            --metadata "$META" \
+            --zips-dir dist \
+            --out "$BUNDLE" \
+            --layout flat
 
           echo "Creating release tag=$TAG title=$TITLE target=$TARGET_SHA"
           gh release create "$TAG" \
@@ -777,29 +783,26 @@ jobs:
           echo "release_tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "release_url=$html_url" >> "$GITHUB_OUTPUT"
 
-          for f in "${zips[@]}"; do
-            [ -f "$f" ] || continue
-            name="$(basename "$f")"
-            name_enc="$(printf '%s' "$name" | jq -sRr @uri)"
-            echo "Uploading asset basename=${name}"
-            curl -sS -f -X POST \
-              -H "Authorization: Bearer ${GH_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
-              -H "Content-Type: application/zip" \
-              --data-binary @"$f" \
-              "${upload_url}?name=${name_enc}" \
-              -o /tmp/upload-asset.json
-            returned="$(jq -r '.name // empty' /tmp/upload-asset.json)"
-            echo "  API response name=${returned}"
-            if [ "$returned" != "$name" ]; then
-              echo "Error: asset name mismatch (exact basename required)"
-              echo "  expected: $name"
-              echo "  got:      $returned"
-              cat /tmp/upload-asset.json || true
-              exit 1
-            fi
-            echo "  OK $name"
-          done
+          name="$(basename "$BUNDLE")"
+          name_enc="$(printf '%s' "$name" | jq -sRr @uri)"
+          echo "Uploading asset basename=${name}"
+          curl -sS -f -X POST \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "Content-Type: application/zip" \
+            --data-binary @"$BUNDLE" \
+            "${upload_url}?name=${name_enc}" \
+            -o /tmp/upload-asset.json
+          returned="$(jq -r '.name // empty' /tmp/upload-asset.json)"
+          echo "  API response name=${returned}"
+          if [ "$returned" != "$name" ]; then
+            echo "Error: asset name mismatch (exact basename required)"
+            echo "  expected: $name"
+            echo "  got:      $returned"
+            cat /tmp/upload-asset.json || true
+            exit 1
+          fi
+          echo "  OK $name"
 
       - name: On failure — residual cleanup guidance
         if: failure()
