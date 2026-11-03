@@ -312,52 +312,68 @@ def resolve_version_number(key: str, row, project_versions, bump: str, version_o
     """
     Returns (new_version_string, previous_version_string_or_None).
 
-    patch/feature: prior must have the same pack-format major and
-    an exact game_versions set match (overlap == 1).
+    Automatic bumps require an exact game_versions set match (Jaccard == 1.0)
+    with a prior version whose major equals the current pack_format (or 0).
+    The major component of every version number is defined as that pack_format.
 
-    If no such prior exists, exit and tell the user to
-    use bump=manual (e.g. first release or list changed).
+    Before returning or aborting, prints a one-line diagnostic:
+      exact:   "{key}: exact predecessor {prev_num}"
+      mismatch: "{key}: no exact predecessor (expected [...], received [...] from {cand}, ...)"
+      manual:  "{key}: manual override {version_override}"
+    At most two near-misses are shown (empty list appears as "received []").
     """
     if bump == "manual":
         if not parse_semver3(version_override):
             raise SystemExit(
                 f"version_override must be major.minor.patch, got: {version_override}"
             )
+        print(f"{key}: manual override {version_override}")
         return version_override, None
 
     major = 0 if row["pack_format"] is None else row["pack_format"]
     row_games = row["game_versions"]
 
+    # Collect every remote version that shares the pack_format major.
+    # Each entry: (date_published, parsed_semver, version_number, overlap, game_versions)
     candidates = []
     for ver in project_versions:
         num = ver.get("version_number") or ""
         parsed = parse_semver3(num)
         if not parsed or parsed[0] != major:
             continue
-        overlap = game_overlap(ver.get("game_versions") or [], row_games)
-        # Exact set match only (Jaccard == 1)
-        if overlap != 1.0:
-            continue
+        remote_games = ver.get("game_versions") or []
+        overlap = game_overlap(remote_games, row_games)
         candidates.append(
-            (ver.get("date_published") or "", parsed, num, overlap)
+            (ver.get("date_published") or "", parsed, num, overlap, remote_games)
         )
 
+    # Highest overlap first, then most recently published.
     candidates.sort(key=lambda x: (x[3], x[0]), reverse=True)
 
-    if not candidates:
-        raise SystemExit(
-            ""
-            f"{key!r}\n"
-            "No Modrinth version found with the same pack_format major and an "
-            "exact game_versions match for this lookup key.\n"
-            "Use bump=manual with version_override (e.g. "
-            f"{major}.0.0) for a first release or after changing game_versions."
-        )
+    exact = [c for c in candidates if c[3] == 1.0]
+    near = [c for c in candidates if c[3] < 1.0][:2]
 
-    _, (mj, mi, pa), prev_num, _ = candidates[0]
-    if bump == "feature":
-        return f"{mj}.{mi + 1}.0", prev_num
-    return f"{mj}.{mi}.{pa + 1}", prev_num
+    if exact:
+        prev_num = exact[0][2]
+        print(f"{key}: exact predecessor {prev_num}")
+        _, (mj, mi, pa), _, _, _ = exact[0]
+        if bump == "feature":
+            return f"{mj}.{mi + 1}.0", prev_num
+        return f"{mj}.{mi}.{pa + 1}", prev_num
+
+    # No exact match — emit diagnostic then abort.
+    if near:
+        parts = [f"received {c[4]!r} from {c[2]}" for c in near]
+        received_text = ", ".join(parts)
+    else:
+        received_text = "received []"
+    print(
+        f"{key}: no exact predecessor "
+        f"(expected {row_games!r}, {received_text})"
+    )
+    raise SystemExit(
+        f"No exact game_versions match for {key!r}. Use bump=manual."
+    )
 
 
 
