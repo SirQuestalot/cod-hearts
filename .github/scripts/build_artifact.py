@@ -256,6 +256,82 @@ def select_paths(content_root: Path, meta_root: Path, game_versions: list[str]):
     return content, meta_template, meta_template.name
 
 
+def check_coverage(lookup: dict, content_root: Path, meta_root: Path) -> None:
+    """
+    Verify that every lookup key is covered by exactly one content folder and
+    exactly one meta folder, and that no range folders are left unreferenced.
+    Prints every problem then raises SystemExit if any exist.
+    """
+    errors: list[str] = []
+
+    content_dirs = sorted(p for p in content_root.iterdir() if p.is_dir()) if content_root.is_dir() else []
+    meta_dirs = sorted(p for p in meta_root.iterdir() if p.is_dir()) if meta_root.is_dir() else []
+    content_names = [p.name for p in content_dirs]
+    meta_names = [p.name for p in meta_dirs]
+
+    referenced_content: set[str] = set()
+    referenced_meta: set[str] = set()
+
+    for key, row in lookup.items():
+        games = row["game_versions"]
+        if not games:
+            continue
+        low = min(games, key=version_key)
+        high = max(games, key=version_key)
+
+        # Content coverage
+        c_matches = [
+            p for p in content_dirs
+            if in_range(low, *parse_range_dir_name(p.name))
+            and in_range(high, *parse_range_dir_name(p.name))
+        ]
+        if not c_matches:
+            errors.append(
+                f"No content folder covers key {key!r} ({low}–{high}): {content_names}"
+            )
+        elif len(c_matches) > 1:
+            errors.append(
+                f"Multiple content folders cover key {key!r} ({low}–{high}): "
+                f"{[p.name for p in c_matches]}"
+            )
+        else:
+            referenced_content.add(c_matches[0].name)
+
+        # Meta coverage
+        m_matches = [
+            p for p in meta_dirs
+            if in_range(low, *parse_range_dir_name(p.name))
+            and in_range(high, *parse_range_dir_name(p.name))
+        ]
+        if not m_matches:
+            errors.append(
+                f"No meta folder covers key {key!r} ({low}–{high}): {meta_names}"
+            )
+        elif len(m_matches) > 1:
+            errors.append(
+                f"Multiple meta folders cover key {key!r} ({low}–{high}): "
+                f"{[p.name for p in m_matches]}"
+            )
+        else:
+            referenced_meta.add(m_matches[0].name)
+
+    for name in content_names:
+        if name not in referenced_content:
+            errors.append(
+                f"Orphan content folder {name!r} is not referenced by any lookup key"
+            )
+    for name in meta_names:
+        if name not in referenced_meta:
+            errors.append(
+                f"Orphan meta folder {name!r} is not referenced by any lookup key"
+            )
+
+    if errors:
+        for msg in errors:
+            print(msg)
+        raise SystemExit("Static coverage check failed")
+
+
 # =============================================================================
 # Template rendering (pack.mcmeta / pack.txt placeholders)
 # =============================================================================
@@ -493,6 +569,9 @@ def main() -> None:
     for t in targets:
         if t not in lookup:
             raise SystemExit(f"Key not in lookup: {t}")
+
+    # --- static coverage: every key covered, no orphan folders ---------------
+    check_coverage(lookup, content_root, meta_root)
 
     # --- Modrinth project + existing versions (for auto-bump) ----------------
     ua = f"{project_slug}-build/1.0"
