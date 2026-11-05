@@ -1,0 +1,212 @@
+name: Sync GitHub to Modrinth
+
+concurrency:
+  group: cod-hearts-automation
+  cancel-in-progress: false
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'core/pack.png'
+      - 'README.md'
+      - 'LICENSE.txt'
+  workflow_dispatch:
+    inputs:
+      target:
+        description: What to sync
+        type: choice
+        options: [about, icon, license, readme, all]
+        default: all
+
+env:
+  PACK_ICON: core/pack.png
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+
+      - name: Resolve targets
+        id: plan
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            T="${{ inputs.target }}"
+            if [ "$T" = "all" ]; then
+              echo "targets=about icon license readme" >> "$GITHUB_OUTPUT"
+            else
+              echo "targets=$T" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            targets=""
+            if git diff --name-only HEAD~1 HEAD 2>/dev/null | grep -qx 'core/pack.png'; then
+              targets="$targets icon"
+            fi
+            if git diff --name-only HEAD~1 HEAD 2>/dev/null | grep -qx 'README.md'; then
+              targets="$targets readme"
+            fi
+            if git diff --name-only HEAD~1 HEAD 2>/dev/null | grep -qx 'LICENSE.txt'; then
+              targets="$targets license"
+            fi
+            targets="$(echo $targets | xargs)"
+            echo "targets=$targets" >> "$GITHUB_OUTPUT"
+            echo "Resolved push targets: '${targets}'"
+          fi
+
+      - name: Sync about
+        if: contains(steps.plan.outputs.targets, 'about')
+        env:
+          MODRINTH_TOKEN: ${{ secrets.MODRINTH_PROJECT_READWRITE_TOKEN }}
+          PROJECT_SLUG: ${{ github.event.repository.name }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          ABOUT=$(curl -sS \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2026-03-10" \
+            "https://api.github.com/repos/${REPO}" \
+            | jq -r '.description // empty')
+
+          if [ -z "$ABOUT" ]; then
+            echo "GitHub repo has no description set. Skipping."
+            exit 0
+          fi
+
+          echo "GitHub About: $ABOUT"
+
+          HTTP_CODE=$(curl -sS -o /tmp/modrinth_response.txt -w "%{http_code}" \
+            -X PATCH "https://api.modrinth.com/v2/project/${PROJECT_SLUG}" \
+            -H "Authorization: $MODRINTH_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n --arg d "$ABOUT" '{description: $d}')")
+
+          echo "Modrinth HTTP status: $HTTP_CODE"
+          cat /tmp/modrinth_response.txt
+
+          if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
+            echo "Error: Modrinth API request failed"
+            exit 1
+          fi
+
+          echo "Tagline sync completed successfully."
+
+      - name: Install ImageMagick
+        if: contains(steps.plan.outputs.targets, 'icon')
+        run: sudo apt-get update && sudo apt-get install -y imagemagick
+
+      - name: Sync icon
+        if: contains(steps.plan.outputs.targets, 'icon')
+        env:
+          MODRINTH_TOKEN: ${{ secrets.MODRINTH_PROJECT_READWRITE_TOKEN }}
+          PROJECT_SLUG: ${{ github.event.repository.name }}
+        run: |
+          set -euo pipefail
+
+          convert "$PACK_ICON" -scale 1000% /tmp/icon.png
+
+          echo "Uploading upscaled icon to Modrinth..."
+          HTTP_CODE=$(curl -sS -o /tmp/modrinth_response.txt -w "%{http_code}" \
+            -X PATCH "https://api.modrinth.com/v2/project/${PROJECT_SLUG}/icon?ext=png" \
+            -H "Authorization: $MODRINTH_TOKEN" \
+            -H "Content-Type: image/png" \
+            --data-binary @/tmp/icon.png)
+
+          echo "Modrinth HTTP status: $HTTP_CODE"
+          cat /tmp/modrinth_response.txt
+
+          if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
+            echo "Error: Modrinth API request failed"
+            exit 1
+          fi
+
+          echo "Icon sync completed successfully."
+
+      - name: Sync license
+        if: contains(steps.plan.outputs.targets, 'license')
+        env:
+          MODRINTH_TOKEN: ${{ secrets.MODRINTH_PROJECT_READWRITE_TOKEN }}
+          PROJECT_SLUG: ${{ github.event.repository.name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          LICENSE_JSON=$(curl -sS \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2026-03-10" \
+            "https://api.github.com/repos/${REPO}/license")
+
+          SPDX_ID=$(echo "$LICENSE_JSON" | jq -r '.license.spdx_id // empty')
+          LICENSE_NAME=$(echo "$LICENSE_JSON" | jq -r '.license.name // empty')
+          LICENSE_URL="https://github.com/${REPO}/blob/main/LICENSE.txt"
+
+          if [ -n "$SPDX_ID" ] && [ "$SPDX_ID" != "NOASSERTION" ] && [ "$SPDX_ID" != "null" ]; then
+            echo "Attempting SPDX license: $SPDX_ID"
+
+            HTTP_CODE=$(curl -sS -o /tmp/modrinth_response.txt -w "%{http_code}" \
+              -X PATCH "https://api.modrinth.com/v2/project/${PROJECT_SLUG}" \
+              -H "Authorization: $MODRINTH_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "{\"license_id\": \"$SPDX_ID\", \"license_url\": \"$LICENSE_URL\"}")
+
+            if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+              echo "License sync completed successfully using SPDX ID."
+              exit 0
+            fi
+
+            echo "::warning::SPDX ID '$SPDX_ID' was rejected by Modrinth. Falling back to custom license."
+          else
+            echo "::warning::No valid SPDX ID detected. Falling back to custom license."
+          fi
+
+          CUSTOM_ID="${LICENSE_NAME:-Custom}"
+
+          echo "Falling back to custom license: $CUSTOM_ID"
+
+          HTTP_CODE=$(curl -sS -o /tmp/modrinth_response.txt -w "%{http_code}" \
+            -X PATCH "https://api.modrinth.com/v2/project/${PROJECT_SLUG}" \
+            -H "Authorization: $MODRINTH_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"license_id\": \"$CUSTOM_ID\", \"license_url\": \"$LICENSE_URL\"}")
+
+          if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
+            echo "Error: Modrinth API request failed"
+            cat /tmp/modrinth_response.txt
+            exit 1
+          fi
+
+          echo "License sync completed successfully using custom license."
+
+      - name: Sync readme
+        if: contains(steps.plan.outputs.targets, 'readme')
+        env:
+          MODRINTH_TOKEN: ${{ secrets.MODRINTH_PROJECT_READWRITE_TOKEN }}
+          PROJECT_SLUG: ${{ github.event.repository.name }}
+        run: |
+          set -euo pipefail
+
+          BODY=$(jq -Rs . < README.md)
+
+          echo "Sending README body to Modrinth..."
+          HTTP_CODE=$(curl -sS -o /tmp/modrinth_response.txt -w "%{http_code}" \
+            -X PATCH "https://api.modrinth.com/v2/project/${PROJECT_SLUG}" \
+            -H "Authorization: $MODRINTH_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"body\": $BODY}")
+
+          echo "Modrinth HTTP status: $HTTP_CODE"
+          cat /tmp/modrinth_response.txt
+
+          if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
+            echo "Error: Modrinth API request failed"
+            exit 1
+          fi
+
+          echo "README sync completed successfully."
