@@ -202,274 +202,31 @@ jobs:
       - name: Validate inputs and resolve keys
         id: plan
         env:
-          # Copy inputs into env vars for simpler shell quoting
           MODE: ${{ inputs.mode }}
           MC_VERSION_KEY_SINGLE: ${{ inputs.mc_version_key_single }}
           MC_VERSION_KEY_RANGE: ${{ inputs.mc_version_key_range }}
           BUMP: ${{ inputs.bump }}
           VERSION_OVERRIDE: ${{ inputs.version_override }}
         run: |
-          # -e: exit if any command fails
-          # -u: exit if we reference an unset variable
-          # -o pipefail: fail if any part of a pipeline fails, not just the last stage
           set -euo pipefail
-
-          # --- Enforce input combinations ------------------------------------
-          if [ "$MC_VERSION_KEY_SINGLE" = "(for mode=single)" ]; then
-            MC_VERSION_KEY_SINGLE=""
-          fi
-
-          if [ "$MC_VERSION_KEY_RANGE" = "(for mode=range)" ]; then
-            MC_VERSION_KEY_RANGE=""
-          fi
-
-          if [ "$VERSION_OVERRIDE" = "(for bump=manual)" ]; then
-            VERSION_OVERRIDE=""
-          fi
-
-          if [ "$MODE" = "single" ] && [ -z "${MC_VERSION_KEY_SINGLE// }" ]; then
-            echo "Error: mc_version_key_single is required when mode=single"
-            exit 1
-          fi
-
-          if [ "$MODE" = "range" ] && [ -z "${MC_VERSION_KEY_RANGE// }" ]; then
-            echo "Error: mc_version_key_range is required when mode=range"
-            exit 1
-          fi
-
-          if [ "$BUMP" = "manual" ]; then
-            if [ "$MODE" != "single" ]; then
-              echo "Error: bump=manual is only allowed when mode=single"
-              exit 1
-            fi
-            if [ -z "${VERSION_OVERRIDE// }" ]; then
-              echo "Error: version_override is required when bump=manual"
-              exit 1
-            fi
-          fi
-
           if [ ! -f "$CHANGELOG_FILE" ]; then
             echo "Error: $CHANGELOG_FILE not found"
             exit 1
           fi
-
           if [ ! -f "$LOOKUP_FILE" ]; then
             echo "Error: $LOOKUP_FILE not found"
             exit 1
           fi
-
           if [ ! -f "$BUILD_SCRIPT" ]; then
             echo "Error: $BUILD_SCRIPT not found"
             exit 1
           fi
-
           if [ ! -f "$VALIDATE_SCRIPT" ]; then
             echo "Error: $VALIDATE_SCRIPT not found (required by build_artifact.py)"
             exit 1
           fi
+          python3 "$BUILD_SCRIPT" resolve-targets
 
-          # =============================================================================
-          # Load keys from format_lookup.json (preserve file key order)
-          # -----------------------------------------------------------------------------
-          # ALL_KEYS = every top-level JSON key, in file order
-          # (e.g. 26.3, 26.2, …, 1.0-1.5.x).
-          # mode=range uses that order for “everything between A and B”.
-          # =============================================================================
-
-          # jq -e: run the filter; exit status is failure if the result is false/null.
-          # 'type == "object"': true only if the root JSON value is { ... }, not [ ... ]
-          # or a bare string/number.
-          # >/dev/null: we only care about success/failure, not the printed "true".
-          # if ! …: enter the error branch when the check fails.
-          if ! jq -e 'type == "object"' "$LOOKUP_FILE" >/dev/null; then
-            echo "Error: $LOOKUP_FILE must be a JSON object keyed by version key"
-            exit 1
-          fi
-
-          # mapfile -t ALL_KEYS: read lines into array ALL_KEYS (-t strips newlines).
-          # < <(...): process substitution — run the command in (...) and feed its
-          # stdout to mapfile as if it were a file.
-          #
-          # jq -r 'keys_unsorted[]':
-          #   keys_unsorted  → list of object keys in file order (not alphabetical;
-          #                    plain "keys" would sort them).
-          #   []             → output one key per line
-          #   -r             → raw strings (no JSON quotes around each key)
-          mapfile -t ALL_KEYS < <(jq -r 'keys_unsorted[]' "$LOOKUP_FILE")
-
-          # ${#ALL_KEYS[@]} = number of elements in the array
-          if [ "${#ALL_KEYS[@]}" -eq 0 ]; then
-            echo "Error: $LOOKUP_FILE has no keys"
-            exit 1
-          fi
-
-          # -----------------------------------------------------------------------------
-          # resolve_key WANT
-          # -----------------------------------------------------------------------------
-          # If WANT is in ALL_KEYS, print it and return 0 (success).
-          # Otherwise print an error to stderr and return 1 (failure).
-          # Used so mode=single / range endpoints must be real lookup keys.
-          # -----------------------------------------------------------------------------
-          resolve_key() {
-            # local: variables only exist inside this function
-            # $1 = first argument passed to the function
-            local want="$1" key
-            for key in "${ALL_KEYS[@]}"; do
-              # { echo ...; return 0; } runs both commands if the match succeeds
-              [ "$key" = "$want" ] && { echo "$key"; return 0; }
-            done
-            # >&2 = send this message to stderr (not mixed with the normal "print key" stdout)
-            echo "Error: key not found in $LOOKUP_FILE: '$want'" >&2
-            return 1
-          }
-
-          # -----------------------------------------------------------------------------
-          # index_of_key WANT
-          # -----------------------------------------------------------------------------
-          # Print the 0-based index of WANT inside ALL_KEYS (0 = first key in the file).
-          # Used by mode=range to know where the slice starts and ends.
-          # "${!ALL_KEYS[@]}" expands to all indices: 0 1 2 … 
-          # -----------------------------------------------------------------------------
-          index_of_key() {
-            local want="$1" i
-            for i in "${!ALL_KEYS[@]}"; do
-              if [ "${ALL_KEYS[$i]}" = "$want" ]; then
-                echo "$i"
-                return 0
-              fi
-            done
-            echo "Error: key not found in $LOOKUP_FILE: '$want'" >&2
-            return 1
-          }
-
-          # =============================================================================
-          # Build TARGETS from mode
-          # -----------------------------------------------------------------------------
-          # TARGETS = ordered list of format_lookup.json keys this workflow run will build.
-          # Starts empty; the case below fills it from MODE + the relevant inputs.
-          # =============================================================================
-          TARGETS=()
-
-          case "$MODE" in
-
-            # ---------------------------------------------------------------------------
-            # mode=single
-            # ---------------------------------------------------------------------------
-            # User supplied one key (e.g. "26.3").
-            # 1) Trim whitespace from the input with xargs.
-            # 2) resolve_key: confirm it exists in ALL_KEYS (else error).
-            # 3) Append that one key to TARGETS.
-            # ---------------------------------------------------------------------------
-            single)
-              TARGETS+=("$(resolve_key "$(echo "$MC_VERSION_KEY_SINGLE" | xargs)")")
-              ;;
-
-            # ---------------------------------------------------------------------------
-            # mode=range
-            # ---------------------------------------------------------------------------
-            # User supplied two endpoints in one string, comma-separated, e.g.
-            #   "1.6.x-1.8.x, 26.3"
-            # We take every key in ALL_KEYS from one endpoint through the other
-            # (inclusive), using **file order**, not Minecraft version sorting.
-            # Endpoint order in the input does not matter.
-            # ---------------------------------------------------------------------------
-            range)
-              # Collect non-empty pieces after splitting on commas
-              ENDPOINTS=()
-              # IFS=',' → split on commas only for this read
-              # -ra RAW → read into array RAW
-              # <<< "$MC_VERSION_KEY_RANGE" → use that string as input
-              IFS=',' read -ra RAW <<< "$MC_VERSION_KEY_RANGE"
-
-              for item in "${RAW[@]}"; do
-                # Trim spaces around each piece (" 26.3" → "26.3")
-                item="$(echo "$item" | xargs)"
-                # Skip empty pieces (e.g. trailing comma)
-                [ -z "$item" ] && continue
-                ENDPOINTS+=("$item")
-              done
-
-              # Must be exactly two endpoints — not 0, 1, or 3+
-              if [ "${#ENDPOINTS[@]}" -ne 2 ]; then
-                echo "Error: mode=range requires exactly two comma-separated keys (start, end)"
-                echo "Got ${#ENDPOINTS[@]} endpoint(s) from: $MC_VERSION_KEY_RANGE"
-                exit 1
-              fi
-
-              # Confirm both keys exist in the lookup file (errors if not)
-              START_KEY="$(resolve_key "${ENDPOINTS[0]}")"
-              END_KEY="$(resolve_key "${ENDPOINTS[1]}")"
-
-              # Numeric positions of those keys inside ALL_KEYS (0-based)
-              START_I="$(index_of_key "$START_KEY")"
-              END_I="$(index_of_key "$END_KEY")"
-
-              # Normalize so START_I is the earlier index in the file and END_I the later.
-              # That way "26.3, 1.6.x-1.8.x" and "1.6.x-1.8.x, 26.3" select the same slice.
-              if [ "$START_I" -gt "$END_I" ]; then
-                TMP="$START_I"
-                START_I="$END_I"
-                END_I="$TMP"
-              fi
-
-              # How many keys are in the inclusive span [START_I, END_I]
-              LENGTH=$((END_I - START_I + 1))
-
-              # Bash array slice: from index START_I, take LENGTH elements
-              # Example: ALL_KEYS indices 0..N, START_I=2, END_I=5 → keys at 2,3,4,5
-              TARGETS=("${ALL_KEYS[@]:$START_I:$LENGTH}")
-              ;;
-
-            # ---------------------------------------------------------------------------
-            # mode=all
-            # ---------------------------------------------------------------------------
-            # No extra input. Build every key in the lookup file, same order as the file.
-            # ---------------------------------------------------------------------------
-            all)
-              TARGETS=("${ALL_KEYS[@]}")
-              ;;
-
-            # ---------------------------------------------------------------------------
-            # Anything else (should not happen if the workflow input choice is trusted)
-            # ---------------------------------------------------------------------------
-            *)
-              echo "Error: unknown mode '$MODE'"
-              exit 1
-              ;;
-          esac
-
-          echo "Targets (${#TARGETS[@]}): ${TARGETS[*]}"
-
-          # --- Pass TARGETS to later steps via GITHUB_OUTPUT -----------------
-          # Bash variables do not carry across steps. Writing to GITHUB_OUTPUT
-          # makes steps.plan.outputs.targets available to the rest of the job.
-          #
-          # Multiline form:
-          #   <name><<NAME_END
-          #   line1
-          #   line2
-          #   NAME_END
-          # The marker NAME_END is arbitrary; it must match on the closing line.
-          {
-            echo "targets<<TARGETS_END"
-            printf '%s\n' "${TARGETS[@]}"
-            echo "TARGETS_END"
-          } >> "$GITHUB_OUTPUT"
-
-      # -----------------------------------------------------------------------
-      # STEP: Fetch GitHub description and license
-      # -----------------------------------------------------------------------
-      # Load repo About + detected license from GitHub for pack template fields
-      # {{DESCRIPTION}} and {{LICENSE}}.
-      #
-      # Description: repo "About" text; non-ASCII tokens dropped.
-      # License:     GitHub’s detected license long name, else SPDX, else fallback.
-      #
-      # Both are written to outputs for the build script as DESCRIPTION / LICENSE.
-      # Outputs:
-      #   steps.github_meta.outputs.description
-      #   steps.github_meta.outputs.license
-      # -----------------------------------------------------------------------
       - name: Fetch GitHub description and license
         id: github_meta
         env:
