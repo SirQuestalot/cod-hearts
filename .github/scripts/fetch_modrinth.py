@@ -1,0 +1,110 @@
+#!/usr/bin/env python3
+"""
+Talk to the Modrinth HTTP API.
+
+Shared by build_artifact, publish_to_modrinth, and import_modrinth_history.
+"""
+
+from __future__ import annotations
+
+import json
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+MAX_ATTEMPTS = 5
+REQUEST_TIMEOUT_SEC = 240
+BACKOFF_CAP_SEC = 60
+
+
+def http_json(url: str, user_agent: str, timeout: int = 60):
+    """
+    GET JSON from url.
+
+    Returns the parsed value, or None when the body is empty.
+    Raises urllib.error.HTTPError / URLError / json.JSONDecodeError on failure.
+    """
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": user_agent,
+            "Accept": "application/json",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        raw = resp.read()
+    if not raw:
+        return None
+    return json.loads(raw.decode("utf-8"))
+
+
+def http_json_or_exit(url: str, user_agent: str, timeout: int = 60):
+    """
+    Like http_json, but aborts the process with SystemExit on network/HTTP/JSON
+    failures so CI logs show a clear reason.
+    """
+    try:
+        return http_json(url, user_agent, timeout=timeout)
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")
+        raise SystemExit(f"HTTP {e.code} fetching {url}\n{body}") from e
+    except urllib.error.URLError as e:
+        raise SystemExit(f"Failed to fetch {url}: {e.reason}") from e
+    except json.JSONDecodeError as e:
+        raise SystemExit(f"Invalid JSON from {url}: {e}") from e
+
+
+def is_transient(exc: BaseException) -> bool:
+    if isinstance(exc, urllib.error.HTTPError):
+        if exc.code in (408, 429):
+            return True
+        if 500 <= exc.code <= 599:
+            return True
+        return False
+    if isinstance(exc, urllib.error.URLError):
+        return True
+    if isinstance(exc, (TimeoutError, OSError)):
+        return True
+    return False
+
+
+def retry_after_seconds(exc: BaseException, attempt: int) -> float:
+    if isinstance(exc, urllib.error.HTTPError):
+        ra = exc.headers.get("Retry-After") if exc.headers else None
+        if ra:
+            try:
+                return min(float(ra), float(BACKOFF_CAP_SEC))
+            except ValueError:
+                pass
+    base = min(2**attempt, BACKOFF_CAP_SEC)
+    return float(min(base, BACKOFF_CAP_SEC))
+
+
+def encode_multipart(fields: dict, files: dict) -> tuple[bytes, str]:
+    boundary = "----ModrinthBoundary7MA4YWxkTrZu0gW"
+    body = bytearray()
+
+    for name, value in fields.items():
+        body.extend(f"--{boundary}\r\n".encode())
+        body.extend(
+            f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode()
+        )
+        body.extend(value if isinstance(value, bytes) else str(value).encode("utf-8"))
+        body.extend(b"\r\n")
+
+    for name, path in files.items():
+        data = path.read_bytes()
+        body.extend(f"--{boundary}\r\n".encode())
+        body.extend(
+            (
+                f'Content-Disposition: form-data; name="{name}"; '
+                f'filename="{path.name}"\r\n'
+                f"Content-Type: application/zip\r\n\r\n"
+            ).encode()
+        )
+        body.extend(data)
+        body.extend(b"\r\n")
+
+    body.extend(f"--{boundary}--\r\n".encode())
+    content_type = f"multipart/form-data; boundary={boundary}"
+    return bytes(body), content_type
