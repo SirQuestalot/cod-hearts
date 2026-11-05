@@ -35,73 +35,15 @@ if str(_SCRIPT_DIR) not in sys.path:
 from report_residuals import emit_residuals, format_residuals  # noqa: E402
 from validate_artifact import validate_artifact  # noqa: E402
 from update_changelog import format_modrinth_changelog, next_sequence  # noqa: E402
-
-MAX_ATTEMPTS = 5
-REQUEST_TIMEOUT_SEC = 240
-BACKOFF_CAP_SEC = 60
-
-
-def env(name: str, default: str | None = None) -> str:
-    value = os.environ.get(name, default)
-    if value is None:
-        raise SystemExit(f"Missing required environment variable: {name}")
-    return value
-
-
-def encode_multipart(fields: dict, files: dict) -> tuple[bytes, str]:
-    boundary = "----ModrinthBoundary7MA4YWxkTrZu0gW"
-    body = bytearray()
-
-    for name, value in fields.items():
-        body.extend(f"--{boundary}\r\n".encode())
-        body.extend(
-            f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode()
-        )
-        body.extend(value if isinstance(value, bytes) else str(value).encode("utf-8"))
-        body.extend(b"\r\n")
-
-    for name, path in files.items():
-        data = path.read_bytes()
-        body.extend(f"--{boundary}\r\n".encode())
-        body.extend(
-            (
-                f'Content-Disposition: form-data; name="{name}"; '
-                f'filename="{path.name}"\r\n'
-                f"Content-Type: application/zip\r\n\r\n"
-            ).encode()
-        )
-        body.extend(data)
-        body.extend(b"\r\n")
-
-    body.extend(f"--{boundary}--\r\n".encode())
-    content_type = f"multipart/form-data; boundary={boundary}"
-    return bytes(body), content_type
-
-
-def is_transient(exc: BaseException) -> bool:
-    if isinstance(exc, urllib.error.HTTPError):
-        if exc.code in (408, 429):
-            return True
-        if 500 <= exc.code <= 599:
-            return True
-        return False
-    if isinstance(exc, urllib.error.URLError):
-        return True
-    if isinstance(exc, TimeoutError):
-        return True
-    return False
-
-
-def retry_after_seconds(exc: BaseException, attempt: int) -> float:
-    if isinstance(exc, urllib.error.HTTPError):
-        ra = exc.headers.get("Retry-After") if exc.headers else None
-        if ra:
-            try:
-                return min(float(ra), float(BACKOFF_CAP_SEC))
-            except ValueError:
-                pass
-    base = min(2**attempt, BACKOFF_CAP_SEC)
-    return float(min(base, BACKOFF_CAP_SEC))
+from read_env import env, write_github_output  # noqa: E402
+from fetch_modrinth import (  # noqa: E402
+    MAX_ATTEMPTS,
+    REQUEST_TIMEOUT_SEC,
+    BACKOFF_CAP_SEC,
+    encode_multipart,
+    is_transient,
+    retry_after_seconds,
+)
 
 
 def create_version(
@@ -163,22 +105,6 @@ def verify_project_identity(
         )
 
 
-
-def write_github_output(name: str, value: str) -> None:
-    """Append a workflow step output (supports multiline via heredoc)."""
-    path = os.environ.get("GITHUB_OUTPUT")
-    if not path:
-        print(f"GITHUB_OUTPUT not set; skip output {name}")
-        return
-    with open(path, "a", encoding="utf-8") as fh:
-        if "\n" in value:
-            fh.write(f"{name}<<OUTPUT_END\n")
-            fh.write(value)
-            if not value.endswith("\n"):
-                fh.write("\n")
-            fh.write("OUTPUT_END\n")
-        else:
-            fh.write(f"{name}={value}\n")
 
 
 def main() -> None:
