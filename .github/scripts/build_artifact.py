@@ -32,73 +32,16 @@ if str(_SCRIPT_DIR) not in sys.path:
 
 from validate_artifact import validate_artifact
 from update_changelog import extract_unreleased
-
-
-# =============================================================================
-# Environment helpers
-# =============================================================================
-
-def env(name: str, default: str | None = None) -> str:
-    """
-    Read a required environment variable.
-    If default is None and the var is missing, abort the whole build.
-    """
-    value = os.environ.get(name, default)
-    if value is None:
-        raise SystemExit(f"Missing required environment variable: {name}")
-    return value
-
-
-def http_json(url: str, user_agent: str, timeout: int = 60):
-    """
-    GET a JSON URL (used for Modrinth API) and return the parsed value.
-
-    Returns:
-      - dict/list/etc. from json.loads when the body is non-empty
-      - None when the body is empty
-
-    Aborts the build (SystemExit) on network/HTTP/JSON failures so CI logs
-    show a clear reason instead of a raw Python traceback only.
-    """
-    # Build the HTTP request. Request is just the "what to fetch" object;
-    # nothing is sent until urlopen runs.
-    req = urllib.request.Request(
-        url,
-        headers={
-            # Modrinth asks for a descriptive User-Agent (project + contact/role).
-            "User-Agent": user_agent,
-            # Prefer JSON responses from the API.
-            "Accept": "application/json",
-        },
-    )
-
-    try:
-        # timeout: seconds to wait for connect + read; avoids a hung workflow job.
-        # urlopen returns a file-like response; `with` closes it when done.
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            # Raw response body as bytes (not yet decoded text / JSON).
-            raw = resp.read()
-
-    # Server responded with an error status (404, 401, 5xx, …).
-    except urllib.error.HTTPError as e:
-        body = e.read().decode("utf-8", errors="replace")
-        raise SystemExit(
-            f"HTTP {e.code} fetching {url}\n{body}"
-        ) from e
-
-    # DNS failure, connection refused, network down, etc.
-    except urllib.error.URLError as e:
-        raise SystemExit(f"Failed to fetch {url}: {e.reason}") from e
-
-    # Empty body is allowed (caller may treat None like "no data").
-    if not raw:
-        return None
-
-    # Parse JSON text into Python dict/list/… .
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError as e:
-        raise SystemExit(f"Invalid JSON from {url}: {e}") from e
+from read_env import env, write_github_output
+from fetch_modrinth import http_json_or_exit as http_json
+from resolve_pack_paths import (
+    version_key,
+    parse_range_dir_name,
+    in_range,
+    find_range_dir_for_span,
+    parse_semver3,
+    game_overlap,
+)
 
 
 # =============================================================================
@@ -154,67 +97,6 @@ def parse_lookup(path: Path) -> dict:
             )
 
     return data
-
-
-# =============================================================================
-# Minecraft-ish version ordering and content/meta folder selection
-# =============================================================================
-# Folder names under core/content and core/meta are ranges, e.g. "1.20.2-26.3".
-# We place a lookup entry by checking that its lowest and highest game versions
-# both fall inside the same folder range (inclusive).
-
-def version_key(v: str) -> tuple:
-    """
-    Turn "1.20.2" / "26.3" into a tuple of ints for sorting/comparison.
-    Non-digit segments become 0 (defensive).
-    """
-    return tuple(int(p) if p.isdigit() else 0 for p in v.split("."))
-
-
-def parse_range_dir_name(name: str) -> tuple[str, str]:
-    """
-    '1.20.2-26.3' -> ('1.20.2', '26.3')
-    '26.3'        -> ('26.3', '26.3')   # single endpoint folder
-    Only splits on the first '-' so odd names still parse predictably.
-    """
-    if "-" in name:
-        left, right = name.split("-", 1)
-        return left, right
-    return name, name
-
-
-def in_range(version: str, min_v: str, max_v: str) -> bool:
-    """True if version_key(min) <= version_key(version) <= version_key(max)."""
-    k = version_key(version)
-    return version_key(min_v) <= k <= version_key(max_v)
-
-
-def find_range_dir_for_span(root: Path, low: str, high: str) -> Path:
-    """
-    Find exactly one subdirectory of root whose name-range contains both low and high.
-    0 matches or 2+ matches → hard error (misconfigured folders or overlapping ranges).
-    """
-    if not root.is_dir():
-        raise SystemExit(f"Missing directory: {root}")
-
-    matches = []
-    for path in sorted(p for p in root.iterdir() if p.is_dir()):
-        min_v, max_v = parse_range_dir_name(path.name)
-        if in_range(low, min_v, max_v) and in_range(high, min_v, max_v):
-            matches.append(path)
-
-    folders = [p.name for p in root.iterdir() if p.is_dir()]
-    if not matches:
-        raise SystemExit(
-            f"No folder under {root} contains full span {low}–{high}. "
-            f"Folders: {folders}"
-        )
-    if len(matches) > 1:
-        raise SystemExit(
-            f"Ambiguous folders under {root} for span {low}–{high}: "
-            f"{[p.name for p in matches]}"
-        )
-    return matches[0]
 
 
 def template_file_in(meta_dir: Path) -> Path:
@@ -363,26 +245,6 @@ def render_meta(
 # =============================================================================
 # Version number resolution (Modrinth-aware bump)
 # =============================================================================
-
-def parse_semver3(s: str):
-    """
-    Parse strict major.minor.patch → (major, minor, patch) or None.
-    """
-    m = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", s.strip())
-    return tuple(int(x) for x in m.groups()) if m else None
-
-
-def game_overlap(a, b) -> float:
-    """
-    Jaccard overlap of two game version lists.
-    Used to match an existing Modrinth version to this lookup entry's lineage
-    (same pack-format major is not enough after merges/splits).
-    """
-    sa, sb = set(a), set(b)
-    if not sa or not sb:
-        return 0.0
-    return len(sa & sb) / len(sa | sb)
-
 
 def resolve_version_number(key: str, row, project_versions, bump: str, version_override: str):
     """
@@ -653,5 +515,85 @@ def main() -> None:
     print("Artifact validation passed.")
 
 
+
+def resolve_targets_from_env() -> list[str]:
+    """
+    Resolve TARGETS from workflow inputs (MODE, MC_VERSION_KEY_*, LOOKUP_FILE).
+
+    Mirrors the former plan-step bash: validates mode/bump combinations,
+    loads lookup keys in file order, and returns the ordered target list.
+    """
+    mode = os.environ.get("MODE", "").strip()
+    single = os.environ.get("MC_VERSION_KEY_SINGLE", "").strip()
+    range_raw = os.environ.get("MC_VERSION_KEY_RANGE", "").strip()
+    bump = os.environ.get("BUMP", "").strip()
+    version_override = os.environ.get("VERSION_OVERRIDE", "").strip()
+    lookup_file = Path(env("LOOKUP_FILE"))
+
+    if single in ("(for mode=single)",):
+        single = ""
+    if range_raw in ("(for mode=range)",):
+        range_raw = ""
+    if version_override in ("(for bump=manual)",):
+        version_override = ""
+
+    if mode == "single" and not single:
+        raise SystemExit("Error: mc_version_key_single is required when mode=single")
+    if mode == "range" and not range_raw:
+        raise SystemExit("Error: mc_version_key_range is required when mode=range")
+    if bump == "manual":
+        if mode != "single":
+            raise SystemExit("Error: bump=manual is only allowed when mode=single")
+        if not version_override:
+            raise SystemExit("Error: version_override is required when bump=manual")
+
+    if not lookup_file.is_file():
+        raise SystemExit(f"Error: {lookup_file} not found")
+
+    lookup = parse_lookup(lookup_file)
+    all_keys = list(lookup.keys())
+    if not all_keys:
+        raise SystemExit(f"Error: {lookup_file} has no keys")
+
+    def resolve_key(want: str) -> str:
+        for key in all_keys:
+            if key == want:
+                return key
+        raise SystemExit(f"Error: key not found in {lookup_file}: {want!r}")
+
+    if mode == "single":
+        targets = [resolve_key(single)]
+    elif mode == "range":
+        endpoints = [p.strip() for p in range_raw.split(",") if p.strip()]
+        if len(endpoints) != 2:
+            raise SystemExit(
+                "Error: mode=range requires exactly two comma-separated keys "
+                f"(start, end); got {len(endpoints)} from: {range_raw}"
+            )
+        start_key = resolve_key(endpoints[0])
+        end_key = resolve_key(endpoints[1])
+        start_i = all_keys.index(start_key)
+        end_i = all_keys.index(end_key)
+        if start_i > end_i:
+            start_i, end_i = end_i, start_i
+        targets = all_keys[start_i : end_i + 1]
+    elif mode == "all":
+        targets = list(all_keys)
+    else:
+        raise SystemExit(f"Error: unknown mode {mode!r}")
+
+    print(f"Targets ({len(targets)}): {' '.join(targets)}")
+    return targets
+
+
+def cli_resolve_targets() -> None:
+    """Workflow entry: write targets to GITHUB_OUTPUT."""
+    targets = resolve_targets_from_env()
+    write_github_output("targets", "\n".join(targets) + "\n")
+
+
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) > 1 and sys.argv[1] == "resolve-targets":
+        cli_resolve_targets()
+    else:
+        main()
