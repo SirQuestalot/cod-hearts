@@ -41,53 +41,21 @@ from update_changelog import (  # noqa: E402
     release_tag,
     release_url,
 )
+from read_env import env  # noqa: E402
+from fetch_modrinth import (  # noqa: E402
+    MAX_ATTEMPTS,
+    BACKOFF_CAP_SEC,
+    http_json,
+    http_json_or_exit,
+    is_transient,
+)
 
-MAX_ATTEMPTS = 5
-BACKOFF_CAP_SEC = 60
 USER_AGENT = "cod-hearts-import/1.0 (github.com; resourcepack history import)"
 VERSION_IDS_BATCH = 50
 
 
-def env(name: str, default: str | None = None) -> str:
-    value = os.environ.get(name, default)
-    if value is None:
-        raise SystemExit(f"Missing required environment variable: {name}")
-    return value
-
-
 def force_enabled() -> bool:
     return os.environ.get("FORCE", "false").strip().lower() in ("1", "true", "yes")
-
-
-def http_json(url: str, timeout: int = 60):
-    """GET JSON; raises urllib errors to caller."""
-    req = urllib.request.Request(
-        url,
-        headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
-    )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        raw = resp.read()
-        if not raw:
-            return None
-        return json.loads(raw.decode("utf-8"))
-
-
-def http_json_or_exit(url: str, timeout: int = 60):
-    try:
-        return http_json(url, timeout=timeout)
-    except urllib.error.HTTPError as e:
-        body = e.read().decode("utf-8", errors="replace")
-        raise SystemExit(f"HTTP {e.code} GET {url}:\n{body}") from e
-    except urllib.error.URLError as e:
-        raise SystemExit(f"Network error GET {url}: {e.reason}") from e
-
-
-def is_transient(exc: BaseException) -> bool:
-    if isinstance(exc, urllib.error.HTTPError):
-        return exc.code in (408, 429, 500, 502, 503, 504)
-    if isinstance(exc, (urllib.error.URLError, TimeoutError, OSError)):
-        return True
-    return False
 
 
 def download_file(url: str, dest: Path) -> None:
@@ -143,7 +111,7 @@ def fetch_version_by_id(api: str, version_id: str) -> dict | None:
     url = f"{api}/version/{version_id}"
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
-            data = http_json(url)
+            data = http_json(url, USER_AGENT)
             if isinstance(data, dict):
                 return data
             return None
@@ -174,7 +142,7 @@ def fetch_versions_by_ids(api: str, ids: list[str]) -> dict[str, dict]:
     encoded = urllib.parse.quote(json.dumps(ids), safe="")
     url = f"{api}/versions?ids={encoded}"
     try:
-        data = http_json(url)
+        data = http_json(url, USER_AGENT)
     except Exception as e:
         print(f"  batch fetch failed ({e}); falling back to per-id")
         for vid in ids:
@@ -264,7 +232,7 @@ def cmd_prepare() -> None:
     excluded = extract_modrinth_ids_from_changelog(changelog_text)
     print(f"Excluded Modrinth IDs from existing entries (n>=1): {len(excluded)}")
 
-    project = http_json_or_exit(f"{api}/project/{slug}")
+    project = http_json_or_exit(f"{api}/project/{slug}", USER_AGENT)
     if not isinstance(project, dict):
         raise SystemExit(f"Project not found: {slug}")
     project_id = str(project.get("id") or "").strip()
