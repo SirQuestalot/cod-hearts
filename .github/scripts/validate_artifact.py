@@ -2,12 +2,23 @@
 """
 Local validation of a resource-pack build artifact directory.
 
-Checks metadata.json shape (including shared changelog_body) and every referenced zip. Does not call Modrinth
-and does not upload anything.
+Checks metadata.json shape (including shared changelog_body) and every
+referenced zip. For each zip also verifies:
+
+  - required root entries (pack.mcmeta or pack.txt, pack.png, LICENSE.txt)
+  - pack_format inside the rendered meta matches the lookup row
+  - every file from the content folder selected for the entry's game_versions
+    is present in the zip (folder fidelity + correct-folder resolution)
+
+Does not call Modrinth and does not upload anything.
 
 Used by:
   - build_artifact.py  (after writing OUT_DIR, before the workflow uploads)
   - publish_to_modrinth.py  (after downloading the artifact, before creates)
+
+Environment (required for the richer checks):
+  LOOKUP_FILE   - path to format_lookup.json
+  CONTENT_ROOT  - path to core/content
 
 Returns:
   A list of human-readable problem strings. Empty list means the artifact
@@ -18,11 +29,153 @@ Returns:
 from __future__ import annotations
 
 import json
-import re
+import os
+import sys
 import zipfile
 from pathlib import Path
 
-SEMVER3 = re.compile(r"^\d+\.\d+\.\d+$")
+_SCRIPT_DIR = Path(__file__).resolve().parent
+if str(_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR))
+
+from resolve_pack_paths import (  # noqa: E402
+    find_range_dir_for_span,
+    parse_semver3,
+    version_key,
+)
+
+ROOT_ICON = "pack.png"
+ROOT_LICENSE = "LICENSE.txt"
+
+
+def _load_lookup(path: Path) -> dict | None:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _expected_pack_format(lookup: dict, key: str, game_versions: list[str]):
+    row = lookup.get(key)
+    if isinstance(row, dict) and "pack_format" in row:
+        return row["pack_format"]
+    for row in lookup.values():
+        if not isinstance(row, dict):
+            continue
+        if list(row.get("game_versions") or []) == list(game_versions):
+            return row.get("pack_format")
+    return object()  # unknown
+
+
+def _check_zip_contents(
+    zf: zipfile.ZipFile,
+    *,
+    key_label: str,
+    prefix: str,
+    game_versions: list[str],
+    content_root: Path | None,
+    expected_format,
+) -> list[str]:
+    errors: list[str] = []
+    names = set(zf.namelist())
+
+    has_meta = "pack.mcmeta" in names or "pack.txt" in names
+    if not has_meta:
+        errors.append(
+            f"{prefix} ({key_label}): zip root missing pack.mcmeta or pack.txt"
+        )
+    if ROOT_ICON not in names:
+        errors.append(f"{prefix} ({key_label}): zip root missing {ROOT_ICON}")
+    if ROOT_LICENSE not in names:
+        errors.append(f"{prefix} ({key_label}): zip root missing {ROOT_LICENSE}")
+
+    if "pack.mcmeta" in names and expected_format is not object():
+        try:
+            raw = zf.read("pack.mcmeta").decode("utf-8")
+            meta_obj = json.loads(raw)
+            pack = meta_obj.get("pack") if isinstance(meta_obj, dict) else None
+            if not isinstance(pack, dict):
+                errors.append(
+                    f"{prefix} ({key_label}): pack.mcmeta missing 'pack' object"
+                )
+            else:
+                if "min_format" in pack or "max_format" in pack:
+                    mn = pack.get("min_format")
+                    mx = pack.get("max_format")
+                    if expected_format is None:
+                        errors.append(
+                            f"{prefix} ({key_label}): pack.mcmeta has numeric "
+                            f"format but lookup pack_format is null"
+                        )
+                    elif mn != expected_format or mx != expected_format:
+                        errors.append(
+                            f"{prefix} ({key_label}): pack.mcmeta "
+                            f"min/max_format ({mn}/{mx}) != lookup "
+                            f"pack_format ({expected_format})"
+                        )
+                elif "pack_format" in pack:
+                    pf = pack.get("pack_format")
+                    if pf != expected_format:
+                        errors.append(
+                            f"{prefix} ({key_label}): pack.mcmeta "
+                            f"pack_format ({pf}) != lookup "
+                            f"pack_format ({expected_format})"
+                        )
+                else:
+                    errors.append(
+                        f"{prefix} ({key_label}): pack.mcmeta has no "
+                        f"pack_format / min_format / max_format"
+                    )
+        except (UnicodeDecodeError, json.JSONDecodeError) as e:
+            errors.append(
+                f"{prefix} ({key_label}): pack.mcmeta is not valid JSON: {e}"
+            )
+    elif "pack.txt" in names and expected_format is not object():
+        try:
+            text = zf.read("pack.txt").decode("utf-8").strip()
+            if not text:
+                errors.append(f"{prefix} ({key_label}): pack.txt is empty")
+            if expected_format is not None:
+                errors.append(
+                    f"{prefix} ({key_label}): pack.txt present but lookup "
+                    f"pack_format is {expected_format!r} (expected null)"
+                )
+        except UnicodeDecodeError as e:
+            errors.append(
+                f"{prefix} ({key_label}): pack.txt is not valid UTF-8: {e}"
+            )
+
+    if content_root is not None and game_versions:
+        try:
+            low = min(game_versions, key=version_key)
+            high = max(game_versions, key=version_key)
+            content_dir = find_range_dir_for_span(content_root, low, high)
+        except SystemExit:
+            errors.append(
+                f"{prefix} ({key_label}): cannot resolve unique content "
+                f"folder for game_versions {game_versions}"
+            )
+            content_dir = None
+        if content_dir is not None:
+            expected_files = [
+                f.relative_to(content_dir).as_posix()
+                for f in content_dir.rglob("*")
+                if f.is_file()
+            ]
+            missing = [rel for rel in expected_files if rel not in names]
+            if missing:
+                shown = missing[:10]
+                extra = len(missing) - len(shown)
+                detail = ", ".join(shown)
+                if extra > 0:
+                    detail += f" (+{extra} more)"
+                errors.append(
+                    f"{prefix} ({key_label}): zip missing {len(missing)} "
+                    f"file(s) from content folder {content_dir.name!r}: {detail}"
+                )
+
+    return errors
 
 
 def validate_artifact(dist_dir: str | Path) -> list[str]:
@@ -80,6 +233,16 @@ def validate_artifact(dist_dir: str | Path) -> list[str]:
         errors.append("metadata.entries must be a non-empty array")
         return errors
 
+    lookup_path = Path(os.environ.get("LOOKUP_FILE", ".github/format_lookup.json"))
+    content_root_env = os.environ.get("CONTENT_ROOT", "core/content")
+    content_root = Path(content_root_env) if content_root_env else None
+    lookup = _load_lookup(lookup_path) if lookup_path.is_file() else None
+    if lookup is None:
+        errors.append(f"LOOKUP_FILE not readable or invalid JSON: {lookup_path}")
+    if content_root is not None and not content_root.is_dir():
+        errors.append(f"CONTENT_ROOT is not a directory: {content_root}")
+        content_root = None
+
     seen_versions: dict[str, str] = {}
     seen_files: dict[str, str] = {}
 
@@ -101,7 +264,7 @@ def validate_artifact(dist_dir: str | Path) -> list[str]:
             errors.append(
                 f"{prefix} ({key_label}): version_number must be a non-empty string"
             )
-        elif not SEMVER3.match(ver.strip()):
+        elif parse_semver3(ver.strip()) is None:
             errors.append(
                 f"{prefix} ({key_label}): version_number must be major.minor.patch, "
                 f"got {ver!r}"
@@ -121,6 +284,7 @@ def validate_artifact(dist_dir: str | Path) -> list[str]:
             errors.append(
                 f"{prefix} ({key_label}): game_versions must be a non-empty list"
             )
+            game_versions = []
         elif not all(isinstance(v, str) and v.strip() for v in game_versions):
             errors.append(
                 f"{prefix} ({key_label}): game_versions must be a list of "
@@ -150,6 +314,13 @@ def validate_artifact(dist_dir: str | Path) -> list[str]:
         if zip_path.stat().st_size <= 0:
             errors.append(f"{prefix} ({key_label}): zip is empty: {zip_path}")
             continue
+
+        expected_format = (
+            _expected_pack_format(lookup, str(key_label), game_versions)
+            if lookup is not None
+            else object()
+        )
+
         try:
             with zipfile.ZipFile(zip_path, "r") as zf:
                 bad = zf.testzip()
@@ -158,6 +329,17 @@ def validate_artifact(dist_dir: str | Path) -> list[str]:
                         f"{prefix} ({key_label}): zip failed integrity test "
                         f"(bad entry {bad!r}): {zip_path}"
                     )
+                    continue
+                errors.extend(
+                    _check_zip_contents(
+                        zf,
+                        key_label=str(key_label),
+                        prefix=prefix,
+                        game_versions=game_versions,
+                        content_root=content_root,
+                        expected_format=expected_format,
+                    )
+                )
         except zipfile.BadZipFile:
             errors.append(
                 f"{prefix} ({key_label}): not a valid zip: {zip_path}"
