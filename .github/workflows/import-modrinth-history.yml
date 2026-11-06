@@ -1,9 +1,20 @@
 # =============================================================================
 # Import Modrinth history as CHANGELOG entry 0 + GitHub Release (full mirror)
 # -----------------------------------------------------------------------------
-# gate:    fail fast if ## [0] or any changelog0-* exists (unless force)
-# prepare: complete version fetch, downloads, warnings (no durable writes)
-# commit:  get_approval → force cleanup → CHANGELOG push → release + assets
+# Three-phase design:
+#   gate:    fail fast if ## [0] already exists or any changelog0-* release
+#            is present (unless the force input is true).
+#   prepare: fetch candidate versions, download zips, write an artifact.
+#            No durable writes occur in this phase.
+#   commit:  force-cleanup (when requested), write ## [0] into CHANGELOG.md,
+#            push, create the GitHub Release, and upload the aggregate zip.
+#
+# The Python script (.github/scripts/import_modrinth_history.py) implements
+# the prepare and commit logic; residual reporting on failure lists only
+# durable actions that already completed and may need manual revert.
+#
+# Requires MODRINTH_PROJECT_READWRITE_TOKEN (or equivalent) and ordinary
+# GITHUB_TOKEN permissions for contents and releases.
 # =============================================================================
 name: Import Modrinth History
 
@@ -31,6 +42,9 @@ env:
   ARTIFACT_NAME: import-modrinth-history-${{ github.run_id }}
 
 jobs:
+  # ------------------------------------------------------------------
+  # Gate: refuse to proceed when entry 0 already exists unless force.
+  # ------------------------------------------------------------------
   gate:
     runs-on: ubuntu-latest
     permissions:
@@ -80,6 +94,9 @@ jobs:
             echo "No existing changelog0-* releases."
           fi
 
+  # ------------------------------------------------------------------
+  # Prepare: produce the import artifact (metadata + zips). No git writes.
+  # ------------------------------------------------------------------
   prepare:
     needs: gate
     runs-on: ubuntu-latest
@@ -126,6 +143,9 @@ jobs:
             printf '\n'
           fi
 
+  # ------------------------------------------------------------------
+  # Commit: durable writes — CHANGELOG push, release creation, assets.
+  # ------------------------------------------------------------------
   commit:
     needs: prepare
     if: ${{ needs.prepare.outputs.entry_count != '' && needs.prepare.outputs.entry_count != '0' }}
