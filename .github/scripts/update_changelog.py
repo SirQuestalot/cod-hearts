@@ -81,6 +81,7 @@ def next_sequence(changelog_text: str) -> int:
 
 
 def release_tag(entry_n: int, day: str) -> str:
+    """Return the deterministic GitHub release tag for a sequential entry."""
     return f"changelog{entry_n}-{day.strip()}"
 
 
@@ -291,6 +292,7 @@ def extract_modrinth_ids_from_changelog(changelog_text: str) -> set[str]:
 
 
 def has_entry_0(changelog_text: str) -> bool:
+    """Return True when a ## [0] heading is already present in the changelog."""
     return ENTRY_0_RE.search(changelog_text) is not None
 
 
@@ -392,6 +394,11 @@ def format_entry0_release_notes(
     version_lines: str,
     changelog_url: str,
 ) -> str:
+    """
+    Body text written to the GitHub Release notes for the historical entry-0
+    release. Includes the version list and a footer link back to the full
+    project changelog.
+    """
     parts = [
         "### Added",
         "- Imported pre-automation versions from Modrinth.",
@@ -428,6 +435,7 @@ def append_entry0_to_changelog(changelog_path: Path, section_text: str) -> None:
 
 
 def _split_changelog(lines: list[str]) -> tuple[list[str], int, int]:
+    """Split changelog lines into (preamble, unreleased_start, unreleased_end)."""
     start = None
     for i, line in enumerate(lines):
         if UNRELEASED_RE.match(line):
@@ -497,6 +505,7 @@ def promote_changelog(
 
 
 def _body_from_metadata(meta_path: Path) -> str:
+    """Read changelog_body from a metadata.json file; abort if missing."""
     if not meta_path.is_file():
         raise SystemExit(f"metadata.json not found: {meta_path}")
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
@@ -507,6 +516,7 @@ def _body_from_metadata(meta_path: Path) -> str:
 
 
 def _version_items_from_env(meta_path: Path) -> list[str]:
+    """Build the list of formatted version-item strings from metadata + env."""
     versions_raw = os.environ.get("CHANGELOG_VERSIONS_JSON", "").strip()
     if not versions_raw:
         raise SystemExit("CHANGELOG_VERSIONS_JSON is required")
@@ -554,6 +564,7 @@ def _version_items_from_env(meta_path: Path) -> list[str]:
 
 
 def _entry_and_day() -> tuple[int, str]:
+    """Read CHANGELOG_ENTRY and CHANGELOG_DATE from the environment."""
     day = os.environ.get("CHANGELOG_DATE", "").strip()
     if not day:
         raise SystemExit("CHANGELOG_DATE is required (UTC YYYY-MM-DD from publish job)")
@@ -568,6 +579,13 @@ def _entry_and_day() -> tuple[int, str]:
 
 
 def main(argv: list[str] | None = None) -> None:
+    """
+    CLI dispatcher used by the workflow jobs.
+
+    Sub-commands (first argument):
+      extract-unreleased, next-sequence, promote, release-notes,
+      entry0-section, entry0-release-notes, and related helpers (see argparse setup).
+    """
     parser = argparse.ArgumentParser(description="CHANGELOG.md / release notes helpers")
     parser.add_argument(
         "command",
