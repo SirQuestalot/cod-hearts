@@ -54,6 +54,82 @@ from resolve_pack_paths import (
 #   }
 # pack_format: int or null (null = pre-pack-format, game_versions<1.6).
 
+def resolve_targets_from_env() -> list[str]:
+    """
+    Resolve TARGETS from workflow inputs (MODE, MC_VERSION_KEY_*, LOOKUP_FILE).
+
+    Mirrors the former plan-step bash: validates mode/bump combinations,
+    loads lookup keys in file order, and returns the ordered target list.
+    """
+    mode = os.environ.get("MODE", "").strip()
+    single = os.environ.get("MC_VERSION_KEY_SINGLE", "").strip()
+    range_raw = os.environ.get("MC_VERSION_KEY_RANGE", "").strip()
+    bump = os.environ.get("BUMP", "").strip()
+    version_override = os.environ.get("VERSION_OVERRIDE", "").strip()
+    lookup_file = Path(env("LOOKUP_FILE"))
+
+    if single in ("(for mode=single)",):
+        single = ""
+    if range_raw in ("(for mode=range)",):
+        range_raw = ""
+    if version_override in ("(for bump=manual)",):
+        version_override = ""
+
+    if mode == "single" and not single:
+        raise SystemExit("Error: mc_version_key_single is required when mode=single")
+    if mode == "range" and not range_raw:
+        raise SystemExit("Error: mc_version_key_range is required when mode=range")
+    if bump == "manual":
+        if mode != "single":
+            raise SystemExit("Error: bump=manual is only allowed when mode=single")
+        if not version_override:
+            raise SystemExit("Error: version_override is required when bump=manual")
+
+    if not lookup_file.is_file():
+        raise SystemExit(f"Error: {lookup_file} not found")
+
+    lookup = parse_lookup(lookup_file)
+    all_keys = list(lookup.keys())
+    if not all_keys:
+        raise SystemExit(f"Error: {lookup_file} has no keys")
+
+    def resolve_key(want: str) -> str:
+        for key in all_keys:
+            if key == want:
+                return key
+        raise SystemExit(f"Error: key not found in {lookup_file}: {want!r}")
+
+    if mode == "single":
+        targets = [resolve_key(single)]
+    elif mode == "range":
+        endpoints = [p.strip() for p in range_raw.split(",") if p.strip()]
+        if len(endpoints) != 2:
+            raise SystemExit(
+                "Error: mode=range requires exactly two comma-separated keys "
+                f"(start, end); got {len(endpoints)} from: {range_raw}"
+            )
+        start_key = resolve_key(endpoints[0])
+        end_key = resolve_key(endpoints[1])
+        start_i = all_keys.index(start_key)
+        end_i = all_keys.index(end_key)
+        if start_i > end_i:
+            start_i, end_i = end_i, start_i
+        targets = all_keys[start_i : end_i + 1]
+    elif mode == "all":
+        targets = list(all_keys)
+    else:
+        raise SystemExit(f"Error: unknown mode {mode!r}")
+
+    print(f"Targets ({len(targets)}): {' '.join(targets)}")
+    return targets
+
+
+def cli_resolve_targets() -> None:
+    """Workflow entry: write targets to GITHUB_OUTPUT."""
+    targets = resolve_targets_from_env()
+    write_github_output("targets", "\n".join(targets) + "\n")
+
+
 def parse_lookup(path: Path) -> dict:
     """
     Load LOOKUP_FILE JSON and validate shape.
@@ -314,7 +390,6 @@ def resolve_version_number(key: str, row, project_versions, bump: str, version_o
     )
 
 
-
 # =============================================================================
 # Zip assembly
 # =============================================================================
@@ -534,84 +609,6 @@ def main() -> None:
             print(f"  {i}. {msg}")
         raise SystemExit(1)
     print("Artifact validation passed.")
-
-
-
-def resolve_targets_from_env() -> list[str]:
-    """
-    Resolve TARGETS from workflow inputs (MODE, MC_VERSION_KEY_*, LOOKUP_FILE).
-
-    Mirrors the former plan-step bash: validates mode/bump combinations,
-    loads lookup keys in file order, and returns the ordered target list.
-    """
-    mode = os.environ.get("MODE", "").strip()
-    single = os.environ.get("MC_VERSION_KEY_SINGLE", "").strip()
-    range_raw = os.environ.get("MC_VERSION_KEY_RANGE", "").strip()
-    bump = os.environ.get("BUMP", "").strip()
-    version_override = os.environ.get("VERSION_OVERRIDE", "").strip()
-    lookup_file = Path(env("LOOKUP_FILE"))
-
-    if single in ("(for mode=single)",):
-        single = ""
-    if range_raw in ("(for mode=range)",):
-        range_raw = ""
-    if version_override in ("(for bump=manual)",):
-        version_override = ""
-
-    if mode == "single" and not single:
-        raise SystemExit("Error: mc_version_key_single is required when mode=single")
-    if mode == "range" and not range_raw:
-        raise SystemExit("Error: mc_version_key_range is required when mode=range")
-    if bump == "manual":
-        if mode != "single":
-            raise SystemExit("Error: bump=manual is only allowed when mode=single")
-        if not version_override:
-            raise SystemExit("Error: version_override is required when bump=manual")
-
-    if not lookup_file.is_file():
-        raise SystemExit(f"Error: {lookup_file} not found")
-
-    lookup = parse_lookup(lookup_file)
-    all_keys = list(lookup.keys())
-    if not all_keys:
-        raise SystemExit(f"Error: {lookup_file} has no keys")
-
-    def resolve_key(want: str) -> str:
-        for key in all_keys:
-            if key == want:
-                return key
-        raise SystemExit(f"Error: key not found in {lookup_file}: {want!r}")
-
-    if mode == "single":
-        targets = [resolve_key(single)]
-    elif mode == "range":
-        endpoints = [p.strip() for p in range_raw.split(",") if p.strip()]
-        if len(endpoints) != 2:
-            raise SystemExit(
-                "Error: mode=range requires exactly two comma-separated keys "
-                f"(start, end); got {len(endpoints)} from: {range_raw}"
-            )
-        start_key = resolve_key(endpoints[0])
-        end_key = resolve_key(endpoints[1])
-        start_i = all_keys.index(start_key)
-        end_i = all_keys.index(end_key)
-        if start_i > end_i:
-            start_i, end_i = end_i, start_i
-        targets = all_keys[start_i : end_i + 1]
-    elif mode == "all":
-        targets = list(all_keys)
-    else:
-        raise SystemExit(f"Error: unknown mode {mode!r}")
-
-    print(f"Targets ({len(targets)}): {' '.join(targets)}")
-    return targets
-
-
-def cli_resolve_targets() -> None:
-    """Workflow entry: write targets to GITHUB_OUTPUT."""
-    targets = resolve_targets_from_env()
-    write_github_output("targets", "\n".join(targets) + "\n")
-
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "resolve-targets":
