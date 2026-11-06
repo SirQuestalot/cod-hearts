@@ -12,6 +12,10 @@ Usage:
     --zips-dir path/to/zips_or_dist \\
     --out path/to/changelogN-YYYY-MM-DD.zip \\
     --layout by-date|flat
+
+The resulting archive is written with ZIP_STORED compression because every
+member is already a compressed resource-pack zip; recompressing would waste
+CPU and produce a larger file.
 """
 
 from __future__ import annotations
@@ -30,6 +34,39 @@ def build_bundle(
     out_path: Path,
     layout: str,
 ) -> list[str]:
+    """
+    Assemble one aggregate release zip from the entries listed in metadata.json.
+
+    Parameters
+    ----------
+    metadata_path
+        Path to the metadata.json produced by a build or import prepare step.
+        Must contain a non-empty "entries" array; each entry must supply at
+        least "file" (and, for by-date layout, "date_published").
+    zips_dir
+        Directory that already holds the individual pack zip files named by
+        the entries.
+    out_path
+        Destination path for the aggregate zip. Parent directories are created
+        as needed; an existing file at this path is replaced.
+    layout
+        "by-date" nests each pack under a YYYY-MM-DD/ prefix taken from the
+        entry's date_published field (used for the historical entry-0 release).
+        "flat" places every pack at the archive root (used for ordinary
+        sequential releases).
+
+    Returns
+    -------
+    list[str]
+        The archive member names that were written, in the same order as the
+        metadata entries.
+
+    Raises
+    ------
+    SystemExit
+        On invalid layout, missing metadata entries, missing source zips, or
+        missing date_published when layout is by-date.
+    """
     if layout not in ("by-date", "flat"):
         raise SystemExit(f"invalid layout {layout!r}; use by-date or flat")
 
@@ -74,6 +111,7 @@ def build_bundle(
 
 
 def main(argv: list[str] | None = None) -> None:
+    """CLI entry point; parses arguments and calls build_bundle."""
     p = argparse.ArgumentParser(description="Build aggregate GitHub release zip")
     p.add_argument("--metadata", required=True, type=Path)
     p.add_argument("--zips-dir", required=True, type=Path)
