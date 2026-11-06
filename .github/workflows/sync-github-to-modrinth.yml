@@ -1,3 +1,18 @@
+# =============================================================================
+# Sync selected repository files to the corresponding Modrinth project fields.
+# -----------------------------------------------------------------------------
+# Triggered on push to main when core/pack.png, README.md or LICENSE.txt change,
+# or manually via workflow_dispatch with a target of about|icon|license|readme|all.
+#
+# Notes:
+#   - "about" is derived from the GitHub repository description and is never
+#     auto-synced on push (it is not a tracked file). Choose it only via the
+#     manual dispatch form.
+#   - The push path inspects only the previous commit (HEAD~1) so that a single
+#     push that touches multiple files still produces a coherent target list.
+#   - Icon conversion requires ImageMagick (installed in the icon step).
+#   - Requires the MODRINTH_PROJECT_READWRITE_TOKEN secret.
+# =============================================================================
 name: Sync GitHub to Modrinth
 
 concurrency:
@@ -31,6 +46,8 @@ jobs:
         with:
           fetch-depth: 2
 
+      # Decide which Modrinth fields to update this run.
+      # Manual dispatch uses the form input; push inspects the previous commit.
       - name: Resolve targets
         id: plan
         run: |
