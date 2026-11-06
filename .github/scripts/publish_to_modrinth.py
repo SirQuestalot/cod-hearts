@@ -46,38 +46,6 @@ from fetch_modrinth import (  # noqa: E402
 )
 
 
-def create_version(
-    api: str,
-    token: str,
-    ua: str,
-    payload: dict,
-    zip_path: Path,
-) -> dict:
-    """
-    POST a new version to Modrinth using multipart form data.
-
-    The JSON payload is sent under the form field "data"; the zip is attached
-    as the file field "file". Returns the parsed response body on success.
-    Callers are responsible for retry logic around transient failures.
-    """
-    body, content_type = encode_multipart(
-        {"data": json.dumps(payload)},
-        {"file": zip_path},
-    )
-    req = urllib.request.Request(
-        f"{api}/version",
-        data=body,
-        method="POST",
-        headers={
-            "Authorization": token,
-            "User-Agent": ua,
-            "Content-Type": content_type,
-        },
-    )
-    with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT_SEC) as resp:
-        return json.loads(resp.read().decode("utf-8"))
-
-
 def verify_project_identity(
     api: str, token: str, project_id: str, slug: str, ua: str
 ) -> None:
@@ -120,6 +88,36 @@ def verify_project_identity(
         )
 
 
+def create_version(
+    api: str,
+    token: str,
+    ua: str,
+    payload: dict,
+    zip_path: Path,
+) -> dict:
+    """
+    POST a new version to Modrinth using multipart form data.
+
+    The JSON payload is sent under the form field "data"; the zip is attached
+    as the file field "file". Returns the parsed response body on success.
+    Callers are responsible for retry logic around transient failures.
+    """
+    body, content_type = encode_multipart(
+        {"data": json.dumps(payload)},
+        {"file": zip_path},
+    )
+    req = urllib.request.Request(
+        f"{api}/version",
+        data=body,
+        method="POST",
+        headers={
+            "Authorization": token,
+            "User-Agent": ua,
+            "Content-Type": content_type,
+        },
+    )
+    with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT_SEC) as resp:
+        return json.loads(resp.read().decode("utf-8"))
 
 
 def main() -> None:
@@ -308,7 +306,6 @@ def main() -> None:
     write_github_output("versions_json", versions_json)
     write_github_output("project_slug", slug)
     print(f"Wrote job outputs entry_n={entry_n} date={day} versions={len(versions_out)}")
-
 
 if __name__ == "__main__":
     main()
