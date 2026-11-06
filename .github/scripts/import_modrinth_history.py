@@ -55,10 +55,12 @@ VERSION_IDS_BATCH = 50
 
 
 def force_enabled() -> bool:
+    """Return True when the FORCE environment variable is the string 'true'."""
     return os.environ.get("FORCE", "false").strip().lower() in ("1", "true", "yes")
 
 
 def download_file(url: str, dest: Path) -> None:
+    """Download url to dest, overwriting any existing file. Raises on HTTP error."""
     dest.parent.mkdir(parents=True, exist_ok=True)
     last_error: BaseException | None = None
     for attempt in range(1, MAX_ATTEMPTS + 1):
@@ -93,10 +95,17 @@ def download_file(url: str, dest: Path) -> None:
 
 
 def derived_zip_prefix(project_slug: str) -> str:
+    """Return a short, filesystem-safe prefix derived from the project slug."""
     return "".join(word.capitalize() for word in project_slug.split("-"))
 
 
 def primary_file(version: dict) -> dict | None:
+    """
+    Select the primary downloadable file object from a Modrinth version dict.
+
+    Prefers the first file whose primary flag is true; falls back to the
+    first file in the list. Returns None when the version has no files.
+    """
     files = version.get("files") or []
     if not isinstance(files, list) or not files:
         return None
@@ -194,6 +203,7 @@ def load_candidate_versions(
 
 
 def _gh_out(name: str, value: str) -> None:
+    """Thin wrapper around write_github_output for local import convenience."""
     path = os.environ.get("GITHUB_OUTPUT")
     if not path:
         return
@@ -208,6 +218,16 @@ def _gh_out(name: str, value: str) -> None:
 
 
 def cmd_prepare() -> None:
+    """
+    Prepare phase: fetch candidate versions, download zips, write artifact.
+
+    No durable writes occur. The resulting OUT_DIR contains metadata.json,
+    the downloaded pack zips, and any warning files. The workflow later
+    uploads this directory as an artifact for the commit job to consume.
+    Candidate versions are those present on Modrinth but not already
+    recorded via <!--modrinthid:...--> comments in CHANGELOG.md (unless
+    FORCE is true).
+    """
     api = env("MODRINTH_API", "https://api.modrinth.com/v2").rstrip("/")
     slug = env("PROJECT_SLUG")
     project_type = env("PROJECT_TYPE", "resourcepack").strip() or "resourcepack"
@@ -369,6 +389,14 @@ def cmd_prepare() -> None:
 
 
 def cmd_commit() -> None:
+    """
+    Commit phase: write the ## [0] section and release-notes files locally.
+
+    Git commit, push, and GitHub Release creation are performed by the
+    surrounding workflow after this script exits successfully. On FORCE
+    the workflow is also responsible for deleting any pre-existing
+    changelog0-* releases before calling this command.
+    """
     out_dir = Path(env("OUT_DIR"))
     changelog_path = Path(env("CHANGELOG_FILE", "CHANGELOG.md"))
     changelog_url = env("CHANGELOG_URL")
@@ -440,6 +468,7 @@ def cmd_commit() -> None:
 
 
 def main(argv: list[str] | None = None) -> None:
+    """Dispatch to prepare or commit according to the first CLI argument."""
     parser = argparse.ArgumentParser(description="Import Modrinth history as entry 0")
     parser.add_argument("command", choices=["prepare", "commit"])
     args = parser.parse_args(argv)
