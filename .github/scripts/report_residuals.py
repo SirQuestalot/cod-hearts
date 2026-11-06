@@ -2,23 +2,38 @@
 """
 Print factual inventory after publish-chain or import-commit success/failure.
 
+The purpose of residual reporting is to leave a clear, human-readable record
+of what was already written when a multi-step publish or import chain fails
+part-way through (or succeeds). The same text is printed to the job log and,
+when GITHUB_STEP_SUMMARY is set, also appended to the step summary.
+
 Env (shared):
   RESIDUAL_STAGE   - publish | changelog | release | import
   RESIDUAL_OUTCOME - failure | success
 
 Publish-chain env:
   CHANGELOG_VERSIONS_JSON - [{version_number, id, key}, ...]
-  CHANGELOG_ENTRY  CHANGELOG_ENTRY  - sequence n
-  CHANGELOG_DATE   - YYYY-MM-DD
-  PROJECT_SLUG     - Modrinth slug
-  PROJECT_TYPE     - default resourcepack
-  RELEASE_TAG      - optional; tag name when known to exist
-  RELEASE_URL      - optional; release HTML URL when known to exist
-  
+  CHANGELOG_ENTRY         - sequence n (the ## [n] that would have been written)
+  CHANGELOG_DATE          - YYYY-MM-DD
+  PROJECT_SLUG            - Modrinth slug
+  PROJECT_TYPE            - default resourcepack
+  RELEASE_TAG             - optional; tag name when known to exist
+  RELEASE_URL             - optional; release HTML URL when known to exist
+
 Import env:
-  IMPORT_VERSIONS_JSON - ["1.2.3", ...] plain version numbers (success)
-  IMPORT_DURABLE_JSON  - ["CHANGELOG.md ## [0] ...", "tag ...", ...] (failure)
+  IMPORT_VERSIONS_JSON - ["1.2.3", ...] plain version numbers (success path)
+  IMPORT_DURABLE_JSON  - ["CHANGELOG.md ## [0] ...", "tag ...", ...] (failure path;
+                         only actions that already mutated durable state)
   CHANGELOG_DATE, RELEASE_TAG, RELEASE_URL (optional)
+
+Two distinct formatters exist because the meaning of "what already happened"
+differs:
+  - publish-chain: list every Modrinth version that was successfully created
+    in this run (they already exist on Modrinth even if the later CHANGELOG
+    or GitHub Release steps failed).
+  - import: on failure list only durable GitHub writes that may need manual
+    revert; on success list the imported version numbers plus the GitHub
+    pointers that were created.
 """
 
 from __future__ import annotations
@@ -66,6 +81,14 @@ def format_residuals(
     release_tag: str | None = None,
     release_url: str | None = None,
 ) -> str:
+    """
+    Format residual inventory for a publish / changelog / release stage.
+
+    On success the text lists Modrinth versions created this run and the
+    GitHub CHANGELOG / tag / release pointers that were written.
+    On failure only the Modrinth versions that already exist are listed,
+    because those are the durable side-effects that outlive the failed job.
+    """
     outcome = (outcome or "failure").strip().lower()
     if outcome not in ("failure", "success"):
         outcome = "failure"
@@ -172,6 +195,10 @@ def format_import_residuals(
 
 
 def emit_residuals(text: str, *, outcome: str = "failure") -> None:
+    """
+    Print the residual text to stdout and, when available, append it to
+    GITHUB_STEP_SUMMARY under a SUCCESS or FAILURE heading.
+    """
     print(text, end="" if text.endswith("\n") else "\n")
     summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
     if not summary_path:
@@ -187,6 +214,7 @@ def emit_residuals(text: str, *, outcome: str = "failure") -> None:
 
 
 def versions_from_env() -> list[dict[str, Any]]:
+    """Parse CHANGELOG_VERSIONS_JSON; return [] on missing or invalid JSON."""
     raw = os.environ.get("CHANGELOG_VERSIONS_JSON", "").strip()
     if not raw:
         return []
@@ -204,6 +232,7 @@ def versions_from_env() -> list[dict[str, Any]]:
 
 
 def _json_list_env(name: str) -> list[Any]:
+    """Parse a JSON list from the named environment variable; return [] on error."""
     raw = os.environ.get(name, "").strip()
     if not raw:
         return []
@@ -218,6 +247,10 @@ def _json_list_env(name: str) -> list[Any]:
 
 
 def main(argv: list[str] | None = None) -> None:
+    """
+    Entry point: read stage/outcome and the corresponding env payloads,
+    format the residual inventory, and emit it.
+    """
     stage = os.environ.get("RESIDUAL_STAGE", "unknown").strip() or "unknown"
     outcome = os.environ.get("RESIDUAL_OUTCOME", "failure").strip().lower() or "failure"
     if outcome not in ("failure", "success"):
