@@ -49,6 +49,7 @@ ROOT_LICENSE = "LICENSE.txt"
 
 
 def _load_lookup(path: Path) -> dict | None:
+    """Load format_lookup.json; return None on any read or JSON error."""
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -57,6 +58,16 @@ def _load_lookup(path: Path) -> dict | None:
 
 
 def _expected_pack_format(lookup: dict, key: str, game_versions: list[str]):
+    """
+    Resolve the pack_format that the rendered meta for this entry must contain.
+
+    Preference order:
+      1. The row keyed by the entry's lookup key (normal path).
+      2. Any row whose game_versions list exactly matches the entry's list
+         (fallback when the key string has drifted).
+    Returns a sentinel object() when no matching row is found so that the
+    caller can distinguish "unknown" from a legitimate null pack_format.
+    """
     row = lookup.get(key)
     if isinstance(row, dict) and "pack_format" in row:
         return row["pack_format"]
@@ -77,6 +88,20 @@ def _check_zip_contents(
     content_root: Path | None,
     expected_format,
 ) -> list[str]:
+    """
+    Validate the interior of one pack zip.
+
+    Checks performed:
+      - Required root entries exist (pack.mcmeta or pack.txt, pack.png,
+        LICENSE.txt).
+      - The rendered pack_format (or min/max_format) matches the value
+        expected from the lookup row.
+      - Every file that lives under the content-range directory selected
+        for this entry's game_versions span is present in the zip at the
+        corresponding relative path (folder fidelity).
+
+    Returns a list of human-readable problem strings (empty = pass).
+    """
     errors: list[str] = []
     names = set(zf.namelist())
 
