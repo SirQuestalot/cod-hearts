@@ -292,6 +292,5 @@ def main(argv: list[str] | None = None) -> None:
     )
     emit_residuals(text, outcome=outcome)
 
-
 if __name__ == "__main__":
     main()
