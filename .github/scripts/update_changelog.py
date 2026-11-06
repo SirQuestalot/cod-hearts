@@ -270,6 +270,76 @@ def format_github_section(
     return out
 
 
+def _split_changelog(lines: list[str]) -> tuple[list[str], int, int]:
+    """Split changelog lines into (preamble, unreleased_start, unreleased_end)."""
+    start = None
+    for i, line in enumerate(lines):
+        if UNRELEASED_RE.match(line):
+            start = i
+            break
+    if start is None:
+        raise SystemExit("No ## [Unreleased] section found")
+
+    end = len(lines)
+    for j in range(start + 1, len(lines)):
+        if HEADING_RE.match(lines[j]) and not UNRELEASED_RE.match(lines[j]):
+            end = j
+            break
+    return lines, start, end
+
+
+def promote_changelog(
+    changelog_path: Path,
+    body: str,
+    version_items: list[str],
+    day: str,
+    seq: int,
+    *,
+    github_repository: str | None = None,
+) -> int:
+    """Clear Unreleased and insert ## [seq] - day with versions + body + release footer."""
+    body = body.strip()
+    if not body:
+        raise SystemExit("promote: changelog body is empty")
+    if not version_items:
+        raise SystemExit("promote: versions list is empty")
+    if seq < 1:
+        raise SystemExit(f"promote: invalid sequence number {seq}")
+
+    lines = changelog_path.read_text(encoding="utf-8").splitlines()
+    lines, urel_i, after_i = _split_changelog(lines)
+
+    preamble = lines[:urel_i]
+    rest = lines[after_i:]
+
+    section_lines = format_github_section(
+        body,
+        version_items,
+        day,
+        seq,
+        include_header=True,
+        github_repository=github_repository,
+    ).splitlines()
+
+    out_lines: list[str] = []
+    out_lines.extend(preamble)
+    if out_lines and out_lines[-1].strip() != "":
+        out_lines.append("")
+    out_lines.append("## [Unreleased]")
+    out_lines.append("")
+    out_lines.extend(section_lines)
+    if rest:
+        if out_lines and out_lines[-1] != "":
+            out_lines.append("")
+        out_lines.extend(rest)
+
+    new_text = "\n".join(out_lines)
+    if not new_text.endswith("\n"):
+        new_text += "\n"
+    changelog_path.write_text(new_text, encoding="utf-8")
+    return seq
+
+
 def extract_modrinth_ids_from_changelog(changelog_text: str) -> set[str]:
     """All modrinthid comment values under ## [n] sections with n >= 1."""
     ids: set[str] = set()
@@ -360,8 +430,6 @@ def format_entry0_version_lines(
     return "\n".join(lines_out)
 
 
-
-
 def format_entry0_section(
     *,
     day: str,
@@ -415,7 +483,6 @@ def format_entry0_release_notes(
     return "\n".join(parts)
 
 
-
 def append_entry0_to_changelog(changelog_path: Path, section_text: str) -> None:
     """Append ## [0] at end of file (below all other entries). Replace if present."""
     text = changelog_path.read_text(encoding="utf-8")
@@ -432,76 +499,6 @@ def append_entry0_to_changelog(changelog_path: Path, section_text: str) -> None:
         i += 1
     body = "\n".join(out).rstrip() + "\n\n" + section_text.strip() + "\n"
     changelog_path.write_text(body, encoding="utf-8")
-
-
-def _split_changelog(lines: list[str]) -> tuple[list[str], int, int]:
-    """Split changelog lines into (preamble, unreleased_start, unreleased_end)."""
-    start = None
-    for i, line in enumerate(lines):
-        if UNRELEASED_RE.match(line):
-            start = i
-            break
-    if start is None:
-        raise SystemExit("No ## [Unreleased] section found")
-
-    end = len(lines)
-    for j in range(start + 1, len(lines)):
-        if HEADING_RE.match(lines[j]) and not UNRELEASED_RE.match(lines[j]):
-            end = j
-            break
-    return lines, start, end
-
-
-def promote_changelog(
-    changelog_path: Path,
-    body: str,
-    version_items: list[str],
-    day: str,
-    seq: int,
-    *,
-    github_repository: str | None = None,
-) -> int:
-    """Clear Unreleased and insert ## [seq] - day with versions + body + release footer."""
-    body = body.strip()
-    if not body:
-        raise SystemExit("promote: changelog body is empty")
-    if not version_items:
-        raise SystemExit("promote: versions list is empty")
-    if seq < 1:
-        raise SystemExit(f"promote: invalid sequence number {seq}")
-
-    lines = changelog_path.read_text(encoding="utf-8").splitlines()
-    lines, urel_i, after_i = _split_changelog(lines)
-
-    preamble = lines[:urel_i]
-    rest = lines[after_i:]
-
-    section_lines = format_github_section(
-        body,
-        version_items,
-        day,
-        seq,
-        include_header=True,
-        github_repository=github_repository,
-    ).splitlines()
-
-    out_lines: list[str] = []
-    out_lines.extend(preamble)
-    if out_lines and out_lines[-1].strip() != "":
-        out_lines.append("")
-    out_lines.append("## [Unreleased]")
-    out_lines.append("")
-    out_lines.extend(section_lines)
-    if rest:
-        if out_lines and out_lines[-1] != "":
-            out_lines.append("")
-        out_lines.extend(rest)
-
-    new_text = "\n".join(out_lines)
-    if not new_text.endswith("\n"):
-        new_text += "\n"
-    changelog_path.write_text(new_text, encoding="utf-8")
-    return seq
 
 
 def _body_from_metadata(meta_path: Path) -> str:
@@ -632,7 +629,6 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     raise SystemExit(f"unknown command: {args.command}")
-
 
 if __name__ == "__main__":
     main()
