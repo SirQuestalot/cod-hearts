@@ -16,6 +16,9 @@
 name: Build and Publish
 
 concurrency:
+  # Shared group across all automation workflows. cancel-in-progress is
+  # false so that a second manual dispatch cannot cancel an in-flight
+  # publish that has already created Modrinth versions.
   group: cod-hearts-automation
   cancel-in-progress: false
 
@@ -108,6 +111,11 @@ on:
         default: true
 
       # When true, publish job runs after a successful build.
+      # ------------------------------------------------------------------
+  # Publish: re-validate the downloaded artifact, identity-check the
+  # project, then create each version (oldest first) with retries.
+  # On partial failure residuals list the versions already on Modrinth.
+  # ------------------------------------------------------------------
       publish:
         description: Publish to Modrinth
         type: boolean
@@ -390,6 +398,11 @@ jobs:
   # ---------------------------------------------------------------------------
   # Record successful publish in CHANGELOG.md (sequence section + clear Unreleased)
   # ---------------------------------------------------------------------------
+  # ------------------------------------------------------------------
+  # Changelog: promote [Unreleased] into a numbered ## [n] section and
+  # push the updated CHANGELOG.md. Residuals on failure list any
+  # Modrinth versions created by the preceding publish job.
+  # ------------------------------------------------------------------
   changelog:
     needs: publish
     runs-on: ubuntu-latest
@@ -459,6 +472,11 @@ jobs:
   # ---------------------------------------------------------------------------
   # GitHub Release (tag + notes matching changelog section + pack zips)
   # ---------------------------------------------------------------------------
+  # ------------------------------------------------------------------
+  # Release: build aggregate zip, write release notes, create the
+  # GitHub Release and attach assets. Residuals on failure list the
+  # already-published Modrinth versions and any CHANGELOG commit.
+  # ------------------------------------------------------------------
   release:
     needs:
       - publish
