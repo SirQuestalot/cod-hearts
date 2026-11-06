@@ -111,11 +111,6 @@ on:
         default: true
 
       # When true, publish job runs after a successful build.
-      # ------------------------------------------------------------------
-  # Publish: re-validate the downloaded artifact, identity-check the
-  # project, then create each version (oldest first) with retries.
-  # On partial failure residuals list the versions already on Modrinth.
-  # ------------------------------------------------------------------
       publish:
         description: Publish to Modrinth
         type: boolean
@@ -356,6 +351,10 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # Publish to Modrinth
+  # ---------------------------------------------------------------------------
+  # Re-validate the downloaded artifact, identity-check the project, then
+  # create each version (oldest first) with retries. On partial failure
+  # residuals list the versions already on Modrinth.
   # ---------------------------------------------------------------------------
   publish:
     needs: build
