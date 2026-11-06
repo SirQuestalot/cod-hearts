@@ -53,6 +53,13 @@ def create_version(
     payload: dict,
     zip_path: Path,
 ) -> dict:
+    """
+    POST a new version to Modrinth using multipart form data.
+
+    The JSON payload is sent under the form field "data"; the zip is attached
+    as the file field "file". Returns the parsed response body on success.
+    Callers are responsible for retry logic around transient failures.
+    """
     body, content_type = encode_multipart(
         {"data": json.dumps(payload)},
         {"file": zip_path},
@@ -74,7 +81,15 @@ def create_version(
 def verify_project_identity(
     api: str, token: str, project_id: str, slug: str, ua: str
 ) -> None:
-    """Read-only: token works and metadata.project_id matches API for slug."""
+    """
+    Read-only identity check performed before any version is created.
+
+    Confirms that the supplied token can reach the project identified by
+    slug and that the project id returned by the API matches the id recorded
+    in metadata.json. Aborts with SystemExit on mismatch or HTTP failure so
+    that a mis-configured secret or stale project id cannot publish under
+    the wrong project.
+    """
     url = f"{api}/project/{slug}"
     req = urllib.request.Request(
         url,
@@ -108,6 +123,22 @@ def verify_project_identity(
 
 
 def main() -> None:
+    """
+    Publish every entry listed in DIST_DIR/metadata.json to Modrinth.
+
+    Steps performed in order:
+      1. Local validate_artifact(DIST_DIR) — same checklist used at build time.
+      2. Read-only project identity check (token + project id vs slug).
+      3. Derive the next sequential CHANGELOG entry number and the UTC date.
+      4. For each entry (oldest first) build the Modrinth payload, create the
+         version with retries on transient errors, and collect successes.
+      5. On partial failure emit residuals for the versions that already
+         exist on Modrinth, then abort.
+      6. Write job outputs (entry_n, changelog_date, versions_json, project_slug)
+         for the subsequent changelog and release jobs.
+
+    Environment variables are documented in the module docstring.
+    """
     api = env("MODRINTH_API", "https://api.modrinth.com/v2").rstrip("/")
     token = env("MODRINTH_TOKEN")
     dist_dir = Path(os.environ.get("DIST_DIR", "dist"))
