@@ -398,6 +398,27 @@ def zip_pack(
 # =============================================================================
 
 def main() -> None:
+    """
+    Build resource-pack zips and metadata.json for the targets selected by
+    the workflow.
+
+    High-level steps:
+      1. Load and validate format_lookup.json; resolve the list of target keys.
+      2. Run check_coverage so that every key maps to exactly one content and
+         one meta range directory (and no orphan folders remain).
+      3. Fetch the current project versions from Modrinth (needed for automatic
+         version-number calculation).
+      4. For each target key: resolve content/meta paths, decide the next
+         version number (exact game-version match required unless bump=manual),
+         assemble the zip, and record an entry.
+      5. Write metadata.json (including the shared Unreleased changelog body).
+      6. Run local validate_artifact on OUT_DIR and abort if any problems are
+         reported.
+
+    Environment variables are listed in the module docstring. This function
+    never publishes; publishing is performed by a later job that consumes the
+    uploaded artifact.
+    """
     # --- config from environment (set by the workflow) -----------------------
     lookup_file = Path(env("LOOKUP_FILE"))
     content_root = Path(env("CONTENT_ROOT"))
