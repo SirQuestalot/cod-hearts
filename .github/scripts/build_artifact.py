@@ -49,10 +49,14 @@ from resolve_pack_paths import (
 # =============================================================================
 # Expected root object keyed by version key:
 #   {
-#     "26.3": { "pack_format": 97, "game_versions": ["26.3"] },
+#     "26.3": { "pack_format": [97, 1], "game_versions": ["26.3"] },
+#     "1.21.7-1.21.8": { "pack_format": 64, "game_versions": ["1.21.7", "1.21.8"] },
 #     "1.0-1.5.x": { "pack_format": null, "game_versions": ["1.0", ...] }
 #   }
-# pack_format: int or null (null = pre-pack-format, game_versions<1.6).
+# pack_format shapes:
+#   - null          : pre-1.6 texture-pack era
+#   - int           : classic single format (pre-1.21.9)
+#   - [major, minor]: modern format with optional minor (1.21.9+)
 
 def resolve_targets_from_env() -> list[str]:
     """
@@ -156,10 +160,24 @@ def parse_lookup(path: Path) -> dict:
             )
 
         pack_format = row["pack_format"]
-        # type(...) is not int rejects bool (True/False), which isinstance would allow
-        if pack_format is not None and type(pack_format) is not int:
+        # Accepted shapes: null | int | [int, int]
+        # type(...) rejects bool, which isinstance(bool, int) would allow.
+        if pack_format is None:
+            pass
+        elif type(pack_format) is int:
+            pass
+        elif (
+            isinstance(pack_format, list)
+            and len(pack_format) == 2
+            and type(pack_format[0]) is int
+            and type(pack_format[1]) is int
+        ):
+            pass
+        else:
             raise SystemExit(
-                f"lookup entry {key!r}: pack_format must be an integer or null"
+                f"lookup entry {key!r}: pack_format must be null, "
+                f"an integer, or a two-element integer array [major, minor]; "
+                f"got {pack_format!r}"
             )
 
         game_versions = row["game_versions"]
@@ -290,6 +308,22 @@ def check_coverage(lookup: dict, content_root: Path, meta_root: Path) -> None:
         raise SystemExit("Static coverage check failed")
 
 
+
+def pack_format_major(pack_format) -> int:
+    """
+    Extract the SemVer-major component from a lookup pack_format value.
+
+    null          → 0
+    int           → that integer
+    [major, minor] → major
+    """
+    if pack_format is None:
+        return 0
+    if isinstance(pack_format, list):
+        return pack_format[0]
+    return pack_format
+
+
 # =============================================================================
 # Template rendering (pack.mcmeta / pack.txt placeholders)
 # =============================================================================
@@ -304,15 +338,25 @@ def render_meta(
 ) -> None:
     """
     Read template, replace placeholders, write dest/out_name.
-      {{PACK_FORMAT}}  → numeric format or "" if null
-      {{DESCRIPTION}}  → GitHub About (ASCII-filtered in the workflow)
-      {{LICENSE}}      → license string from workflow
+
+    {{PACK_FORMAT}} is replaced by a JSON-compatible token:
+      null           → empty string (pre-1.6 pack.txt templates)
+      int            → decimal digits (classic pack_format field)
+      [major, minor] → JSON array text, e.g. [97, 1] (modern min/max_format)
+
+    {{DESCRIPTION}} → GitHub About (ASCII-filtered in the workflow)
+    {{LICENSE}}     → license string from workflow
     """
+    if pack_format is None:
+        format_token = ""
+    elif isinstance(pack_format, list):
+        # Emit valid JSON array syntax so modern templates stay legal JSON.
+        format_token = json.dumps(pack_format, separators=(", ", ": "))
+    else:
+        format_token = str(pack_format)
+
     text = template.read_text(encoding="utf-8")
-    text = text.replace(
-        "{{PACK_FORMAT}}",
-        str(pack_format if pack_format is not None else ""),
-    )
+    text = text.replace("{{PACK_FORMAT}}", format_token)
     text = text.replace("{{DESCRIPTION}}", description)
     text = text.replace("{{LICENSE}}", license_text)
     (dest / out_name).write_text(text, encoding="utf-8")
@@ -328,7 +372,8 @@ def resolve_version_number(key: str, row, project_versions, bump: str, version_o
 
     Automatic bumps require an exact game_versions set match (Jaccard == 1.0)
     with a prior version whose major equals the current pack_format (or 0).
-    The major component of every version number is defined as that pack_format.
+    The major component of every version number is the major format number
+    (first element of a [major, minor] array, or the integer itself).
 
     Before returning or aborting, prints a one-line diagnostic:
       exact:   "{key}: exact predecessor {prev_num}"
@@ -344,7 +389,7 @@ def resolve_version_number(key: str, row, project_versions, bump: str, version_o
         print(f"{key}: manual override {version_override}")
         return version_override, None
 
-    major = 0 if row["pack_format"] is None else row["pack_format"]
+    major = pack_format_major(row["pack_format"])
     row_games = row["game_versions"]
 
     # Collect every remote version that shares the pack_format major.
