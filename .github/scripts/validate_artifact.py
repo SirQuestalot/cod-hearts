@@ -61,6 +61,10 @@ def _expected_pack_format(lookup: dict, key: str, game_versions: list[str]):
     """
     Resolve the pack_format that the rendered meta for this entry must contain.
 
+    The returned value may be null, an int, or a two-element [major, minor]
+    list; it is compared with ordinary Python equality against the value
+    written into pack.mcmeta.
+
     Preference order:
       1. The row keyed by the entry's lookup key (normal path).
       2. Any row whose game_versions list exactly matches the entry's list
@@ -130,8 +134,8 @@ def _check_zip_contents(
                     mx = pack.get("max_format")
                     if expected_format is None:
                         errors.append(
-                            f"{prefix} ({key_label}): pack.mcmeta has numeric "
-                            f"format but lookup pack_format is null"
+                            f"{prefix} ({key_label}): pack.mcmeta has "
+                            f"min/max_format but lookup pack_format is null"
                         )
                     elif mn != expected_format or mx != expected_format:
                         errors.append(
