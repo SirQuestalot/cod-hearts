@@ -1,26 +1,26 @@
 {    
     "26.3": {
-        "pack_format": 97,
+        "pack_format": [97, 1],
         "game_versions": ["26.3"]
     },
 
     "26.2": {
-        "pack_format": 88,
+        "pack_format": [88, 0],
         "game_versions": ["26.2"]
     },
 
     "26.1.x": {
-        "pack_format": 84,
+        "pack_format": [84, 0],
         "game_versions": ["26.1", "26.1.1", "26.1.2"]
     },
 
     "1.21.11": {
-        "pack_format": 75,
+        "pack_format": [75, 0],
         "game_versions": ["1.21.11"]
     },
 
     "1.21.9-1.21.10": {
-        "pack_format": 69,
+        "pack_format": [69, 0],
         "game_versions": ["1.21.9", "1.21.10"]
     },
 
