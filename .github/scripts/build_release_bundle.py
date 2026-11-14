@@ -59,7 +59,9 @@ def build_bundle(
     -------
     list[str]
         The archive member names that were written, in the same order as the
-        metadata entries.
+        metadata entries. While the list itself follows metadata entry order, 
+        the zip central directory is written in reverse so that
+        the newest pack is the last uploaded (so it shows up at the top).
 
     Raises
     ------
@@ -101,7 +103,9 @@ def build_bundle(
 
     # ZIP_STORED: pack zips are already compressed
     with zipfile.ZipFile(out_path, "w", compression=zipfile.ZIP_STORED) as zf:
-        for arcname, src in members:
+        # reversed so that the newest pack is the last member written
+        # (UIs that surface “last added” then show newest at the top).
+        for arcname, src in reversed(members):
             zf.write(src, arcname)
 
     print(f"Wrote {out_path} ({len(members)} pack(s), layout={layout})")
