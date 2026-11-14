@@ -22,13 +22,20 @@ These section headers are used under each release.<br>A header is only included 
 ### Deprecated
 - test
 
-## [0] - 2026-11-01
+## [0] - 2026-11-14
 
 ### Added
 - Imported pre-automation versions from Modrinth.
 - Per-version (pre-KaC) changelogs from Modrinth are stored in `metadata.json` (GitHub Release asset).
 
 ### Modrinth
+
+- **2026-11-14**
+  - 1.15.x-1.16.1 [5.2.0](https://modrinth.com/resourcepack/cod-hearts/version/REde5eUG)<!--modrinthid:REde5eUG-->
+  - 1.13.x-1.14.x [4.2.0](https://modrinth.com/resourcepack/cod-hearts/version/cMzA8X5F)<!--modrinthid:cMzA8X5F-->
+  - 1.11.x-1.12.x [3.2.0](https://modrinth.com/resourcepack/cod-hearts/version/rpaJOYv1)<!--modrinthid:rpaJOYv1-->
+  - 1.9.x-1.10.x [2.2.0](https://modrinth.com/resourcepack/cod-hearts/version/hPZ5FgDk)<!--modrinthid:hPZ5FgDk-->
+  - 1.6.x-1.8.x [1.3.0](https://modrinth.com/resourcepack/cod-hearts/version/4hJaC7CI)<!--modrinthid:4hJaC7CI-->
 
 - **2026-09-16**
   - 26.3 [97.0.0](https://modrinth.com/resourcepack/cod-hearts/version/utSmaBKq)<!--modrinthid:utSmaBKq-->
@@ -103,4 +110,4 @@ These section headers are used under each release.<br>A header is only included 
   - 1.6.x [1.0.0](https://modrinth.com/resourcepack/cod-hearts/version/H0LO8XcG)<!--modrinthid:H0LO8XcG-->
   - 1.0-1.5.x [0.0.0](https://modrinth.com/resourcepack/cod-hearts/version/dBcfaBdX)<!--modrinthid:dBcfaBdX-->
 
-[GitHub Release](https://github.com/SirQuestalot/cod-hearts/releases/tag/changelog0-2026-11-01) · changelog0-2026-11-01
+[GitHub Release](https://github.com/SirQuestalot/cod-hearts/releases/tag/changelog0-2026-11-14) · changelog0-2026-11-14
